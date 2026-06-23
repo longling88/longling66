@@ -182,7 +182,7 @@ foreach ($raw_data as $item) {
                         <div class="ip-item">
                             <div class="ip-value">
                                 <div class="ip-value-top">
-                                    <?php echo htmlspecialchars($ipStr); ?>
+                                    <?php echo htmlspecialchars($ip['ip']); ?>
                                     <?php if ($ipStr === $current_ip): ?><span class="badge">您的当前IP</span><?php endif; ?>
                                 </div>
                                 <span class="time-badge">录入时间: <?php echo htmlspecialchars($timeStr); ?></span>
