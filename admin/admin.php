@@ -368,7 +368,7 @@ if (!empty($data['product_channel_mapping'])) {
 $statsFile = $rootDir . '/stats.json';
 $statsData = file_exists($statsFile) ? json_decode(file_get_contents($statsFile), true) : [];
 
-// 1. 最近 7 天的大屏图表数据
+// 1. 最近 7 天的图表数据 (每日PV/UV)
 $chart7Dates = []; $chart7PV = []; $chart7UV = [];
 for ($i = 6; $i >= 0; $i--) {
     $d = date('Y-m-d', strtotime("-$i days"));
@@ -383,7 +383,7 @@ for ($i = 6; $i >= 0; $i--) {
     $chart7PV[] = $dayPv; $chart7UV[] = count($dayUvList);
 }
 
-// 2. 今日 24 小时的图表数据 (兼容旧版无通道明细的情况)
+// 2. 今日 24 小时的图表数据
 $todayStr = date('Y-m-d');
 $chart24Hours = []; $chart24PV = []; $chart24UV = [];
 for ($h = 0; $h <= 23; $h++) {
@@ -392,12 +392,10 @@ for ($h = 0; $h <= 23; $h++) {
     $hPv = 0; $hUvList = [];
     if (isset($statsData[$todayStr]['hourly'][$hourStr])) {
         $hourData = $statsData[$todayStr]['hourly'][$hourStr];
-        // 兼容旧结构
         if (isset($hourData['pv']) && !is_array($hourData['pv'])) {
             $hPv = $hourData['pv'];
             if(!empty($hourData['uv'])) foreach($hourData['uv'] as $u) $hUvList[$u] = 1;
         } else {
-            // 新结构 (含通道细分)
             foreach ($hourData as $chCode => $chData) {
                 $hPv += $chData['pv'] ?? 0;
                 if (!empty($chData['uv'])) foreach ($chData['uv'] as $u) $hUvList[$u] = 1;
@@ -418,7 +416,6 @@ $rankStats = [];
 if ($rankHour === 'all') {
     $rankStats = $statsData[$rankDate]['channels'] ?? [];
 } else {
-    // 按小时下钻
     if (isset($statsData[$rankDate]['hourly'][$rankHour])) {
         $hourData = $statsData[$rankDate]['hourly'][$rankHour];
         if (isset($hourData['pv']) && !is_array($hourData['pv'])) {
@@ -429,10 +426,12 @@ if ($rankHour === 'all') {
     }
 }
 
-// 4. 解析访问日志 (自动清理7天前数据)
+// 4. 解析访问日志并自动清理，增加 IP 搜索功能
 $logFile = $rootDir . '/access_logs.txt';
 $logData = [];
 $filterChannel = $_GET['log_channel'] ?? '';
+$searchIp = trim($_GET['search_ip'] ?? '');
+
 if (file_exists($logFile)) {
     $lines = file($logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
     $sevenDaysAgo = date('Y-m-d H:i:s', strtotime('-7 days'));
@@ -443,7 +442,12 @@ if (file_exists($logFile)) {
             list($lTime, $lIp, $lCode) = $parts;
             if ($lTime >= $sevenDaysAgo) {
                 $keepLines[] = $line;
-                if ($filterChannel === '' || $filterChannel === $lCode) {
+                
+                // ✨ 日志筛选核心逻辑：同时匹配通道和IP（支持IP模糊搜索）
+                $matchChannel = ($filterChannel === '' || $filterChannel === $lCode);
+                $matchIp = ($searchIp === '' || stripos($lIp, $searchIp) !== false);
+                
+                if ($matchChannel && $matchIp) {
                     $logData[] = ['time' => $lTime, 'ip' => $lIp, 'channel' => $lCode];
                 }
             }
@@ -453,7 +457,7 @@ if (file_exists($logFile)) {
     if (count($lines) > count($keepLines) + 200) {
         file_put_contents($logFile, implode(PHP_EOL, array_reverse($keepLines)) . PHP_EOL, LOCK_EX);
     }
-    $logData = array_slice($logData, 0, 500); // 页面最多显示最新 500 条
+    $logData = array_slice($logData, 0, 500); // 页面最多显示最新 500 条防卡顿
 }
 
 if (empty($_SESSION['admin_logged'])) {
@@ -546,7 +550,6 @@ if (empty($_SESSION['admin_logged'])) {
         .search-input { width: 220px; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-base); font-size: 13px; outline: none; }
         .carousel-item { background: white; border: 1px solid var(--border-color); padding: 10px; border-radius: 8px; text-align: center; display: flex; flex-direction: column; align-items: center;}
         .carousel-image { width: 100%; height: 120px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb; margin-bottom: 10px; }
-        /* 大屏图表样式 */
         .stats-number { font-size: 28px; font-weight: bold; color: var(--primary-color); }
         .chart-box { position: relative; height: 320px; width: 100%; margin-top: 20px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 15px; }
     </style>
@@ -598,9 +601,8 @@ if (empty($_SESSION['admin_logged'])) {
                             <div class="form-group"><label>轮播图数量</label><div class="stats-number"><?php echo count($data['site_info']['carousel_images']??[]); ?></div></div>
                             <div class="form-group"><label>底部快捷链接数</label><div class="stats-number"><?php echo count($data['banners']??[]); ?></div></div>
                             <div class="form-group"><label>白名单IP防线数</label><div class="stats-number"><?php echo count($whitelist); ?></div></div>
-                            <div class="form-group"><label>您当前的公网IP</label><div style="font-size: 16px; color: var(--text-secondary); margin-top:5px; font-family:monospace; font-weight:bold;"><?php echo htmlspecialchars($current_ip); ?></div></div>
+                            <div class="form-group"><label>您当前的公网IP</label><div style="font-size: 16px; color: var(--text-secondary); margin-top:5px; font-family:monospace;"><?php echo htmlspecialchars($current_ip); ?></div></div>
                         </div>
-
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                             <div class="chart-box">
                                 <h4 style="margin-bottom: 10px; color: #374151; font-size:14px;">📈 近 7 天流量走势 (全站总计)</h4>
@@ -617,12 +619,9 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="traffic_ranking" class="module-content <?php echo $activeModule === 'traffic_ranking' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">🏆 各通道流量风云榜</div>
-                        <div class="help-box">
-                            这里可以查询最近 30 天内【每一天】甚至是【每一个小时】各个代理商推广通道的点击量(PV)和独立访客数(UV)。
-                        </div>
+                        <div class="help-box">这里可以查询最近 30 天内【每一天】甚至是【每一个小时】各个代理商推广通道的点击量(PV)和独立访客数(UV)。</div>
                         <form method="GET" style="margin-bottom: 20px; display:flex; align-items:center; gap:15px; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
                             <input type="hidden" name="module" value="traffic_ranking">
-                            
                             <label style="font-weight:bold;">📅 选择日期：</label>
                             <input type="date" name="rank_date" value="<?php echo $rankDate; ?>" min="<?php echo $minDate; ?>" max="<?php echo $maxDate; ?>" class="form-control" style="width:160px;" onchange="this.form.submit()">
                             
@@ -640,7 +639,6 @@ if (empty($_SESSION['admin_logged'])) {
                             <tbody>
                                 <?php 
                                 if (!empty($rankStats)): 
-                                    // 排序：按PV从高到低
                                     uasort($rankStats, function($a, $b) { return ($b['pv']??0) <=> ($a['pv']??0); });
                                     $rankNum = 1;
                                     foreach ($rankStats as $c_code => $c_data):
@@ -661,23 +659,38 @@ if (empty($_SESSION['admin_logged'])) {
                     </div>
                 </div>
 
+                <!-- ✨ 升级版：访客访问日志 (新增精准/模糊IP搜索功能) -->
                 <div id="access_logs" class="module-content <?php echo $activeModule === 'access_logs' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">👣 访客访问日志追踪</div>
                         <div class="help-box">
                             日志系统仅保留并显示最近 7 天的访客记录（过期的自动清理），且页面最多展示最新 500 条。<br>
-                            你可以使用下方下拉框单独过滤出某个代理通道的访客记录。
+                            你可以使用下方过滤条件，单独查看某个代理通道的记录，或者精准搜索某个访客的 IP。
                         </div>
-                        <form method="GET" style="margin-bottom: 20px; display:flex; align-items:center; gap:10px; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
+                        <form method="GET" style="margin-bottom: 20px; display:flex; align-items:center; flex-wrap:wrap; gap:15px; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
                             <input type="hidden" name="module" value="access_logs">
-                            <label style="font-weight:bold;">🔍 筛选代理通道：</label>
-                            <select name="log_channel" class="form-control" style="width:250px;" onchange="this.form.submit()">
-                                <option value="">-- 查看全部访问 --</option>
-                                <option value="default" <?php if($filterChannel==='default') echo 'selected'; ?>>散客访问 (无后缀)</option>
-                                <?php if (!empty($data['channels'])): foreach ($data['channels'] as $ch): ?>
-                                    <option value="<?php echo htmlspecialchars($ch['code']); ?>" <?php if($filterChannel===$ch['code']) echo 'selected'; ?>><?php echo htmlspecialchars($ch['code']); ?></option>
-                                <?php endforeach; endif; ?>
-                            </select>
+                            
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label style="font-weight:bold;">🔍 筛选通道：</label>
+                                <select name="log_channel" class="form-control" style="width:160px;" onchange="this.form.submit()">
+                                    <option value="">-- 查看全部 --</option>
+                                    <option value="default" <?php if($filterChannel==='default') echo 'selected'; ?>>散客访问</option>
+                                    <?php if (!empty($data['channels'])): foreach ($data['channels'] as $ch): ?>
+                                        <option value="<?php echo htmlspecialchars($ch['code']); ?>" <?php if($filterChannel===$ch['code']) echo 'selected'; ?>><?php echo htmlspecialchars($ch['code']); ?></option>
+                                    <?php endforeach; endif; ?>
+                                </select>
+                            </div>
+
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label style="font-weight:bold;">🎯 搜索 IP：</label>
+                                <input type="text" name="search_ip" value="<?php echo htmlspecialchars($searchIp); ?>" class="form-control" placeholder="输入完整或部分IP..." style="width:180px;">
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary" style="padding: 8px 16px;">查询</button>
+                            
+                            <?php if(!empty($searchIp) || !empty($filterChannel)): ?>
+                                <a href="?module=access_logs" class="btn btn-outline" style="padding: 8px 16px; margin-left: auto;">清除查询条件</a>
+                            <?php endif; ?>
                         </form>
 
                         <table class="custom-table">
@@ -772,21 +785,20 @@ if (empty($_SESSION['admin_logged'])) {
                     <div class="card">
                         <div class="card-header">🔀 代理通道管理</div>
                         <div class="help-box">
-                            <strong>使用说明：</strong><br>
                             1. 输入一个英文/数字代号（比如：<code>agent88</code>），点击添加。<br>
-                            2. 代理商推广时，发给客户链接：<code>你的主域名/?code=agent88</code><br>
-                            3. ⚠️ <strong>注意：</strong>通过该链接访问的客户，网页只会显示在“通道映射管理”里配置过这个代号的产品。
+                            2. 代理商发给客户的链接就是：<code>你的主域名/?code=agent88</code><br>
+                            3. ⚠️ 网页只会显示在“通道映射管理”里给这个通道配置过的产品。
                         </div>
                         <form method="POST" style="margin-bottom:20px;">
                             <input type="hidden" name="action" value="add_channel">
                             <div class="form-grid">
-                                <div class="form-group"><label>通道代号（英文/数字，如 agent88）</label><input type="text" name="channel_code" class="form-control" required pattern="[A-Za-z0-9]+"></div>
+                                <div class="form-group"><label>通道代号（英文/数字）</label><input type="text" name="channel_code" class="form-control" required pattern="[A-Za-z0-9]+"></div>
                                 <div class="form-group"><label>代理商名称（备注用）</label><input type="text" name="channel_name" class="form-control" required></div>
                             </div>
                             <button type="submit" class="btn btn-primary">➕ 创建通道</button>
                         </form>
                         <table class="custom-table">
-                            <thead><tr><th>通道代号 (用作推广后缀)</th><th>代理商备注名称</th><th>操作</th></tr></thead>
+                            <thead><tr><th>通道代号 (推广后缀)</th><th>代理商备注名称</th><th>操作</th></tr></thead>
                             <tbody>
                                 <?php if (!empty($data['channels'])): foreach ($data['channels'] as $i => $ch): ?>
                                 <tr>
@@ -810,9 +822,7 @@ if (empty($_SESSION['admin_logged'])) {
                     <div class="card">
                         <div class="card-header">🔗 通道映射管理</div>
                         <div class="help-box">
-                            <strong>功能说明：</strong> 在这里为具体的产品绑定【代理通道】并设置【专属跳转域名】。<br>
-                            👉 比如产品A，你加了 `agent88` 通道，跳转到 `abc.com`。当客户访问 `你的网站/?code=agent88` 时，他能看见产品A，且点击后会跳到 `abc.com`。<br>
-                            ⚠️ 如果产品A没有在这里配置任何代理通道，那么使用代理链接打开时不会显示该产品！
+                            为具体的产品绑定【代理通道】并设置【专属跳转域名】。没配置代理的产品在此通道下会隐身。
                         </div>
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                             <div style="display:flex; gap:10px;"><button type="button" class="btn btn-primary" onclick="openModal('addMappingModal')">➕ 新增产品映射</button><button type="button" class="btn btn-warning" onclick="showBatchMappingModal()">📦 批量设置映射</button></div>
@@ -905,7 +915,6 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="site" class="module-content <?php echo $activeModule === 'site' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">📝 全局配置</div>
-                        <div class="help-box">网页的主体文本、LOGO 图片和防骗弹窗信息，统一在此修改。</div>
                         <form method="POST" enctype="multipart/form-data">
                             <input type="hidden" name="action" value="update_site">
                             <div class="form-group" style="margin-bottom:15px;"><label>网站浏览器网页标题 (Title)</label><input type="text" name="site_title" value="<?php echo htmlspecialchars($data['site_info']['site_title'] ?? '平台导航主页'); ?>" class="form-control" required></div>
@@ -913,47 +922,29 @@ if (empty($_SESSION['admin_logged'])) {
                                 <div class="form-group"><label>主标文字一 (左上角)</label><input type="text" name="logo_text_1" value="<?php echo htmlspecialchars($data['site_info']['logo_text_1']); ?>" class="form-control"></div>
                                 <div class="form-group"><label>主标文字二 (带颜色字)</label><input type="text" name="logo_text_2" value="<?php echo htmlspecialchars($data['site_info']['logo_text_2']); ?>" class="form-control"></div>
                             </div>
-                            <div class="form-group"><label>滚动跑马灯公告内容</label><input type="text" name="announcement" value="<?php echo htmlspecialchars($data['site_info']['announcement']); ?>" class="form-control"></div>
+                            <div class="form-group"><label>滚动公告</label><input type="text" name="announcement" value="<?php echo htmlspecialchars($data['site_info']['announcement']); ?>" class="form-control"></div>
                             <div class="form-group" style="margin-top:10px;">
-                                <label>左上角LOGO上传 (本地直接上传新图覆盖)</label>
+                                <label>左上角LOGO上传 (直接上传新图覆盖)</label>
                                 <?php if(!empty($data['site_info']['logo_url'])): ?><div style="margin-bottom:5px;"><img src="<?php echo htmlspecialchars(getImgUrl($data['site_info']['logo_url'])); ?>" style="height:40px; background:#f3f4f6; border-radius:4px; padding:2px; border:1px solid #e5e7eb;"></div><?php endif; ?>
                                 <input type="file" name="logo_file" accept="image/*" class="form-control">
                             </div>
-                            <div class="form-group"><label>或填写LOGO外链地址 (URL)</label><input type="text" name="logo_url" value="<?php echo htmlspecialchars(getImgUrl($data['site_info']['logo_url'])); ?>" class="form-control"></div>
+                            <div class="form-group"><label>或填写LOGO外链地址</label><input type="text" name="logo_url" value="<?php echo htmlspecialchars(getImgUrl($data['site_info']['logo_url'])); ?>" class="form-control"></div>
                             <hr style="border:0; border-top:1px solid var(--border-color); margin:25px 0;">
-                            <div class="form-group"><label>底部防骗提示标题</label><input type="text" name="notice_title" value="<?php echo htmlspecialchars($data['footer_info']['notice_title']); ?>" class="form-control"></div>
-                            <div class="form-group"><label>底部防骗内容</label><textarea name="notice_content" class="form-control" rows="3"><?php echo htmlspecialchars($data['footer_info']['notice_content']); ?></textarea></div>
-                            <div class="form-group"><label>最底端版权说明</label><input type="text" name="copyright" value="<?php echo htmlspecialchars($data['footer_info']['copyright']); ?>" class="form-control"></div>
-                            <div style="margin-top: 20px;"><button type="submit" class="btn btn-primary">💾 保存配置</button></div>
+                            <div class="form-group"><label>防骗提示标题</label><input type="text" name="notice_title" value="<?php echo htmlspecialchars($data['footer_info']['notice_title']); ?>" class="form-control"></div>
+                            <div class="form-group"><label>防骗内容</label><textarea name="notice_content" class="form-control" rows="3"><?php echo htmlspecialchars($data['footer_info']['notice_content']); ?></textarea></div>
+                            <div class="form-group"><label>版权</label><input type="text" name="copyright" value="<?php echo htmlspecialchars($data['footer_info']['copyright']); ?>" class="form-control"></div>
+                            <div style="margin-top: 20px;"><button type="submit" class="btn btn-primary">保存配置</button></div>
                         </form>
                     </div>
                 </div>
 
-                <div id="whitelist" class="module-content <?php echo $activeModule === 'whitelist' ? 'active' : ''; ?>">
-                    <div class="card">
-                        <div class="card-header">🛡️ IP白名单管理 (安全防线)</div>
-                        <div class="help-box">
-                            <strong>最高级警告：</strong> 如果这个列表有任何IP，其他人就绝对进不了后台！<br>
-                            请务必确保你的电脑IP（看最上面“数据概览”里的当前IP）加在白名单里。如果你被锁在外面了，请访问 <code>域名/whitelist.php</code> 输入安全密码自救。
-                        </div>
-                        <form method="POST" style="display:flex; gap:12px; margin-bottom:20px;">
-                            <input type="hidden" name="action" value="add_ip"><input type="text" name="ip" class="form-control" placeholder="输入要强制放行的IP" required><button type="submit" class="btn btn-primary">➕ 加白</button>
-                        </form>
-                        <div style="background: white; border: 1px solid var(--border-color); border-radius: var(--radius-base); overflow: hidden;">
-                            <?php if (!empty($whitelist)): foreach ($whitelist as $ip): ?>
-                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-color);">
-                                    <span style="font-family: monospace; font-size: 15px;"><?php echo htmlspecialchars($ip); ?></span>
-                                    <form method="POST" style="margin:0;" onsubmit="return confirm('确定移除？');"><input type="hidden" name="action" value="delete_ip"><input type="hidden" name="ip" value="<?php echo htmlspecialchars($ip); ?>"><button type="submit" class="action-btn btn-danger">移除拦截</button></form>
-                                </div>
-                            <?php endforeach; else: ?><div style="padding:20px; text-align:center; color:#9ca3af;">当前没有任何白名单，只要知道密码任何人都能登录</div><?php endif; ?>
-                        </div>
-                    </div>
-                </div>
+                <div id="whitelist" class="module-content <?php echo $activeModule === 'whitelist' ? 'active' : ''; ?>"><div class="card"><div class="card-header">🛡️ IP白名单管理 (安全防线)</div><form method="POST" style="display:flex; gap:12px; margin-bottom:20px;"><input type="hidden" name="action" value="add_ip"><input type="text" name="ip" class="form-control" placeholder="输入要强制放行的IP" required><button type="submit" class="btn btn-primary">➕ 加白</button></form><div style="background: white; border: 1px solid var(--border-color); border-radius: var(--radius-base); overflow: hidden;"><?php if (!empty($whitelist)): foreach ($whitelist as $ip): ?><div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span style="font-family: monospace; font-size: 15px;"><?php echo htmlspecialchars($ip); ?></span><form method="POST" style="margin:0;" onsubmit="return confirm('确定移除？移除后该IP将无法访问后台！');"><input type="hidden" name="action" value="delete_ip"><input type="hidden" name="ip" value="<?php echo htmlspecialchars($ip); ?>"><button type="submit" class="action-btn btn-danger">移除拦截</button></form></div><?php endforeach; else: ?><div style="padding:20px; text-align:center; color:#9ca3af;">当前没有任何白名单，只要知道密码任何人都能登录</div><?php endif; ?></div></div></div>
 
             </main>
         </div>
     </div>
 
+    <!-- 模态框区 -->
     <div id="editModal" class="modal">
         <div class="modal-content"><div class="modal-header">✏️ 编辑产品</div><form method="POST" enctype="multipart/form-data"><input type="hidden" name="action" value="update_product"><input type="hidden" name="tab_id" id="editTabId"><input type="hidden" name="index" id="editIndex"><div class="form-group"><label>产品名称</label><input type="text" name="name" id="editName" class="form-control" required></div><div class="form-group"><label>平台默认跳转链接</label><input type="text" name="url" id="editUrl" class="form-control" required></div><div class="form-group"><label>更换图标 (选填)</label><input type="file" name="icon_file" class="form-control" accept="image/*"></div><div class="form-group"><label>外链图标</label><input type="text" name="icon_url" id="editIconUrl" class="form-control"></div><div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal('editModal')">取消</button><button type="submit" class="btn btn-primary">保存修改</button></div></form></div>
     </div>
@@ -1000,7 +991,7 @@ if (empty($_SESSION['admin_logged'])) {
     </div>
 
     <div id="batchMappingModal" class="modal">
-        <div class="modal-content" style="max-width: 900px;"><div class="modal-header">📦 批量为代理商分配产品</div><form method="POST"><input type="hidden" name="action" value="batch_set_channel_mapping"><div class="form-group"><label>1. 选择目标代理通道</label><input type="text" class="form-control" placeholder="🔍 快捷搜索通道..." oninput="filterSelectOptions(this, 'batchChannelSelect')" style="margin-bottom: 5px;"><select name="channel_code" id="batchChannelSelect" class="form-control" required size="4" style="height: 120px;"><?php if (!empty($data['channels'])): foreach ($data['channels'] as $ch): ?><option value="<?php echo htmlspecialchars($ch['code']); ?>"><?php echo htmlspecialchars($ch['code'] . ' - ' . $ch['name']); ?></option><?php endforeach; endif; ?></select></div><div style="margin-top: 20px;"><label>2. 勾选允许该代理推广的产品，并填入跳转域名：</label><div style="height:300px; overflow-y:auto; border:1px solid #e5e7eb; padding:10px; margin-top:10px; border-radius:8px;"><div class="checkbox-grid"><?php foreach ($allProducts as $prod): ?><label class="checkbox-item" style="display:flex; flex-direction:column; align-items:flex-start; gap:5px;"><div style="display:flex; align-items:center; gap:5px; width:100%;"><input type="checkbox" name="product_ids[]" value="<?php echo htmlspecialchars($prod['id']); ?>"><strong><?php echo htmlspecialchars($prod['name']); ?></strong></div><input type="text" name="channel_domains[]" class="form-control" placeholder="输入跳转域名" style="font-size:12px; padding:6px;"></label><?php endforeach; ?></div></div></div><div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal('batchMappingModal')">取消</button><button type="submit" class="btn btn-primary">💾 批量应用配置</button></div></form></div>
+        <div class="modal-content" style="max-width: 900px;"><div class="modal-header">📦 批量为代理商分配产品</div><form method="POST"><input type="hidden" name="action" value="batch_set_channel_mapping"><div class="form-group"><label>1. 选择目标代理通道</label><input type="text" class="form-control" placeholder="🔍 快捷搜索通道..." oninput="filterSelectOptions(this, 'batchChannelSelect')" style="margin-bottom: 5px;"><select name="channel_code" id="batchChannelSelect" class="form-control" required size="4" style="height: 120px;"><?php if (!empty($data['channels'])): foreach ($data['channels'] as $ch): ?><option value="<?php echo htmlspecialchars($ch['code']); ?>"><?php echo htmlspecialchars($ch['code'] . ' - ' . $ch['name']); ?></option><?php endforeach; endif; ?></select></div><div style="margin-top: 20px;"><label>2. 勾选允许该代理推广的产品，并填入跳转域名：</label><div style="height:300px; overflow-y:auto; border:1px solid #e5e7eb; padding:10px; margin-top:10px; border-radius:8px;"><div class="checkbox-grid"><?php foreach ($allProducts as $prod): ?><label class="checkbox-item" style="display:flex; flex-direction:column; align-items:flex-start; gap:5px;"><div style="display:flex; align-items:center; gap:5px; width:100%;"><input type="checkbox" name="product_ids[]" value="<?php echo htmlspecialchars($prod['id']); ?>"><strong><?php echo htmlspecialchars($prod['name']); ?></strong></div><input type="text" name="channel_domains[]" class="form-control" placeholder="输入该产品的跳转域名" style="font-size:12px; padding:6px;"></label><?php endforeach; ?></div></div></div><div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal('batchMappingModal')">取消</button><button type="submit" class="btn btn-primary">💾 批量应用配置</button></div></form></div>
     </div>
 
     <script>
