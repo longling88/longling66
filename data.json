@@ -1,0 +1,96 @@
+{
+    "site_info": {
+        "logo_url": "uploads\/logo_1782126837.png",
+        "logo_text_1": "欢迎来到PG电子模拟器",
+        "logo_text_2": "PG235.top",
+        "welcome_text": "欢迎光临本站",
+        "announcement": "11111111111111111111111111111",
+        "carousel_images": [
+            "uploads\/carousel_1782203267_6a3a4383714cd.jpg",
+            "uploads\/carousel_1782203510_6a3a44763b6bb.webp",
+            "uploads\/carousel_1782203782_6a3a4586966f1.png"
+        ]
+    },
+    "footer_info": {
+        "notice_title": "谨防AI诈骗",
+        "notice_content": "将围绕金融、电信、电子政务、电子商务等重点领域和行业网络安全问题...",
+        "copyright": "© 2011-2026 All Rights Reserved, PG235.top"
+    },
+    "tabs": [
+        {
+            "id": "tab_1782199633791",
+            "name": "8NN集团产品",
+            "max": 100
+        }
+    ],
+    "products": {
+        "tab_1782199633791": [
+            {
+                "id": "prod_6a3a359483fc0",
+                "name": "PG娱乐城",
+                "icon": "uploads\/6a3a359483f1c.png",
+                "url": "https:\/\/88w.com"
+            },
+            {
+                "id": "prod_6a3a36c1b21f0",
+                "name": "澳门银河",
+                "icon": "uploads\/6a3a36c1b2148.png",
+                "url": "https:\/\/888y.com"
+            }
+        ]
+    },
+    "banners": [
+        {
+            "title": "爆庄必备心法",
+            "subtitle": "电子、彩票、百家速成大法",
+            "icon": "https:\/\/img.icons8.com\/color\/48\/fire-element.png",
+            "url": ""
+        },
+        {
+            "title": "优惠活动大厅",
+            "subtitle": "各平台优惠活动大厅",
+            "icon": "https:\/\/img.icons8.com\/color\/48\/gift.png",
+            "url": ""
+        },
+        {
+            "title": "实用工具大全",
+            "subtitle": "提供各式各样的实用工具",
+            "icon": "https:\/\/img.icons8.com\/color\/48\/toolbox.png",
+            "url": ""
+        }
+    ],
+    "channels": [
+        {
+            "code": "85666",
+            "domain": "https:\/\/mydomain.com",
+            "name": ""
+        },
+        {
+            "code": "4g56sg",
+            "name": "主播视频",
+            "domain": "https:\/\/mydomain.com"
+        },
+        {
+            "code": "zhuboship",
+            "name": "xx9",
+            "domain": "https:\/\/mydomain.com"
+        }
+    ],
+    "carousel_images": [
+        "uploads\/carousel_1782131364_6a392aa4b4168.jpg",
+        "uploads\/carousel_1782131382_6a392ab68b64f.jpg",
+        "uploads\/carousel_1782131387_6a392abb039a2.jpg"
+    ],
+    "product_channel_mapping": {
+        "prod_a4055088504bc857128e0543c6e30ca4": {
+            "zhuboship": "https:\/\/mydomain.com"
+        },
+        "prod_9bade2ea973e8ff2e56ada5d3d01d80a": {
+            "4g56sg": "https:\/\/mydomain.com"
+        },
+        "prod_6a3a359483fc0": {
+            "4g56sg": "https:\/\/99t.com",
+            "zhuboship": "https:\/\/99n.com"
+        }
+    }
+}

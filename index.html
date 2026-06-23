@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>rec...</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'PingFang SC', sans-serif; -webkit-user-select: none !important; user-select: none !important; -webkit-user-drag: none !important; }
+        body { background-color: #333; display: flex; justify-content: center; min-height: 100vh; margin: 0; cursor: default; }
+        img { pointer-events: none; }
+        a, button { pointer-events: auto; }
+        .mobile-wrapper { width: 100%; max-width: 480px; min-height: 100vh; background-color: #f5f7fb; position: relative; border-left: 2px solid #a3b8cc; border-right: 2px solid #a3b8cc; box-shadow: 0 0 25px rgba(0,0,0,0.6); overflow-x: hidden; display: flex; flex-direction: column; }
+        .top-header { display: flex; align-items: center; padding: 15px 20px; background: #fff; }
+        .top-header img { width: 50px; height: 50px; border-radius: 50%; margin-right: 15px; object-fit: cover; }
+        .top-header .logo-text { display: flex; flex-direction: column; }
+        .top-header .logo-text span:nth-child(1) { font-size: 14px; color: #666; }
+        .top-header .logo-text span:nth-child(2) { font-size: 18px; font-weight: bold; color: #00d26a; }
+        .carousel-container { position: relative; width: 100%; aspect-ratio: 790 / 318; background: #ddd; overflow: hidden; }
+        .carousel-slide { display: flex; width: 100%; height: 100%; transition: transform 0.5s ease; }
+        .carousel-slide img { width: 100%; height: 100%; object-fit: cover; flex-shrink: 0; }
+        .carousel-dots { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+        .carousel-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.5); cursor: pointer; }
+        .carousel-dot.active { background: white; }
+        .marquee-box { background: #fff; border-radius: 0 0 12px 12px; padding: 8px 15px; display: flex; align-items: center; font-size: 13px; overflow: hidden; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .marquee-box span { color: #ff4d4f; font-weight: bold; margin-right: 5px; white-space: nowrap; }
+        .marquee-content { flex: 1; overflow: hidden; white-space: nowrap; position: relative; height: 18px; }
+        .marquee-inner { display: inline-block; padding-left: 100%; animation: marquee 12s linear infinite; color: #333; }
+        @keyframes marquee { 0% { transform: translate(0, 0); } 100% { transform: translate(-100%, 0); } }
+        .content-panel { background: #fff; border-radius: 15px; margin: 0 15px 15px; padding: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }
+        .tabs { display: flex; justify-content: center; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px; flex-wrap: wrap; gap: 10px;}
+        .tab-item { font-size: 15px; color: #666; font-weight: bold; cursor: default; padding: 5px 10px; position: relative; }
+        .tab-item.active { color: #1e40af; }
+        .tab-item.active::after { content: ''; position: absolute; bottom: -11px; left: 50%; transform: translateX(-50%); width: 30px; height: 3px; background: #1e40af; border-radius: 2px; }
+        .product-grid { display: none; grid-template-columns: repeat(4, 1fr); gap: 15px 10px; text-align: center; }
+        .product-grid.active { display: grid; }
+        .product-item { text-decoration: none; color: #333; display: flex; flex-direction: column; align-items: center; }
+        .product-item img { width: 55px; height: 55px; object-fit: cover; border-radius: 14px; margin-bottom: 8px; box-shadow: 0 3px 8px rgba(0,0,0,0.1); border: 1px solid #e5e7eb;}
+        .product-item span { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; }
+        .banner-list { padding: 0 15px; flex: 1; }
+        .banner-item { text-decoration: none; background: linear-gradient(90deg, #2563eb, #1e40af); border-radius: 12px; padding: 15px; display: flex; align-items: center; color: white; margin-bottom: 12px; box-shadow: 0 3px 10px rgba(37, 99, 235, 0.2); }
+        .banner-item img { width: 40px; height: 40px; margin-right: 15px; background: rgba(255,255,255,0.2); border-radius: 8px; padding: 5px; }
+        .banner-text { flex: 1; }
+        .banner-text h3 { font-size: 15px; margin-bottom: 3px; }
+        .banner-text p { font-size: 12px; color: rgba(255,255,255,0.8); }
+        .banner-arrow { font-size: 18px; font-weight: bold; }
+        .footer-notice { background: #fff; margin: 15px; border-radius: 12px; padding: 15px; font-size: 12px; color: #666; line-height: 1.6; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }
+        .footer-notice h4 { font-size: 14px; color: #1e40af; margin-bottom: 5px; }
+        .copyright { text-align: center; color: #999; font-size: 12px; padding: 10px 0 30px; }
+        img[src=""], img:not([src]) { opacity: 0; }
+        @media (max-width: 400px) { .product-grid { grid-template-columns: repeat(3, 1fr); } }
+    </style>
+</head>
+<body>
+<div class="mobile-wrapper">
+    <div class="top-header">
+        <img id="logoImg" src="" alt="Logo">
+        <div class="logo-text"><span id="logoText1"></span><span id="logoText2"></span></div>
+    </div>
+    
+    <div class="carousel-container" id="carouselContainer">
+        <div class="carousel-slide" id="carouselSlide"></div>
+        <div class="carousel-dots" id="carouselDots"></div>
+    </div>
+    
+    <div class="marquee-box">
+        <span>最新公告：</span>
+        <div class="marquee-content"><div class="marquee-inner" id="announcementText"></div></div>
+    </div>
+    
+    <div class="content-panel">
+        <div class="tabs" id="tabsContainer"></div>
+        <div id="productsContainer"></div>
+    </div>
+    
+    <div class="banner-list" id="bannersContainer"></div>
+    
+    <div class="footer-notice">
+        <h4 id="noticeTitle"></h4><p id="noticeContent"></p>
+    </div>
+    
+    <div class="copyright" id="copyrightText"></div>
+</div>
+
+<script>
+    // 阻止PC端调试与右键
+    document.addEventListener('contextmenu', e => e.preventDefault());
+    document.addEventListener('keydown', e => {
+        if(e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I')) e.preventDefault();
+    });
+
+    function getQueryParam(name) { return new URLSearchParams(window.location.search).get(name); }
+    
+    function fixImageUrl(url) {
+        if (!url) return '';
+        if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('//')) return url;
+        const host = window.location.protocol + '//' + window.location.host;
+        return url.startsWith('/') ? host + url : host + '/' + url;
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        fetch('admin/get_public_data.php?v=' + new Date().getTime())
+            .then(response => response.json())
+            .then(data => {
+                // 1. 基础信息渲染
+                if (data.site_info) {
+                    const logoImg = document.getElementById('logoImg');
+                    if(data.site_info.logo_url) {
+                        logoImg.src = fixImageUrl(data.site_info.logo_url);
+                        logoImg.style.display = 'block';
+                    } else {
+                        logoImg.style.display = 'none';
+                    }
+                    document.getElementById('logoText1').innerText = data.site_info.logo_text_1 || '';
+                    document.getElementById('logoText2').innerText = data.site_info.logo_text_2 || '';
+                    document.getElementById('announcementText').innerText = data.site_info.announcement || '';
+                }
+                
+                if (data.footer_info) {
+                    document.getElementById('noticeTitle').innerText = data.footer_info.notice_title || '';
+                    document.getElementById('noticeContent').innerText = data.footer_info.notice_content || '';
+                    document.getElementById('copyrightText').innerText = data.footer_info.copyright || '';
+                }
+
+                // 2. 轮播图逻辑
+                const carouselImages = data.site_info?.carousel_images || [];
+                const slideContainer = document.getElementById('carouselSlide');
+                const dotsContainer = document.getElementById('carouselDots');
+                const carouselWrapper = document.getElementById('carouselContainer');
+                
+                if (carouselImages.length > 0) {
+                    carouselWrapper.style.display = 'block';
+                    slideContainer.innerHTML = ''; dotsContainer.innerHTML = '';
+                    carouselImages.forEach((src, idx) => {
+                        const img = document.createElement('img'); img.src = fixImageUrl(src); slideContainer.appendChild(img);
+                        const dot = document.createElement('span'); dot.className = `carousel-dot ${idx === 0 ? 'active' : ''}`;
+                        dot.addEventListener('click', () => goToSlide(idx)); dotsContainer.appendChild(dot);
+                    });
+                    let currentIndex = 0;
+                    function goToSlide(index) {
+                        if (index < 0) index = carouselImages.length - 1;
+                        if (index >= carouselImages.length) index = 0;
+                        currentIndex = index; slideContainer.style.transform = `translateX(-${index * 100}%)`;
+                        document.querySelectorAll('.carousel-dot').forEach((d, i) => d.classList.toggle('active', i === index));
+                    }
+                    setInterval(() => goToSlide(currentIndex + 1), 4000);
+                } else {
+                    carouselWrapper.style.display = 'none'; // 没有轮播图直接隐藏该区域
+                }
+
+                // 🌟 3. 核心拦截逻辑：获取当前访问的代理通道 Code
+                const currentChannelCode = getQueryParam('code');
+                const channelMappings = data.product_channel_mapping || {};
+
+                // 4. 渲染分类与产品
+                const tabsContainer = document.getElementById('tabsContainer');
+                const productsContainer = document.getElementById('productsContainer');
+                tabsContainer.innerHTML = ''; productsContainer.innerHTML = '';
+
+                if (data.tabs && data.tabs.length > 0) {
+                    let firstValidTabIndex = -1; // 记录第一个有产品的 Tab
+
+                    data.tabs.forEach((tab, index) => {
+                        const tabDiv = document.createElement('div');
+                        tabDiv.className = 'tab-item';
+                        tabDiv.innerText = tab.name;
+                        
+                        const gridDiv = document.createElement('div');
+                        gridDiv.className = 'product-grid';
+                        
+                        tabDiv.addEventListener('click', () => {
+                            document.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
+                            document.querySelectorAll('.product-grid').forEach(el => el.classList.remove('active'));
+                            tabDiv.classList.add('active');
+                            gridDiv.classList.add('active');
+                        });
+
+                        const products = data.products?.[tab.id] || [];
+                        let validCount = 0;
+
+                        if (products.length > 0) {
+                            products.forEach(prod => {
+                                let targetUrl = prod.url || '#';
+                                let isVisible = true;
+
+                                // ✨ 绝对核心逻辑：如果在代理通道下，没配置专属域名的产品强制隐藏！
+                                if (currentChannelCode) {
+                                    // 根据产品 ID 查找该产品的映射配置
+                                    const prodMap = channelMappings[prod.id];
+                                    if (prodMap && prodMap[currentChannelCode]) {
+                                        // 配置了！替换成专属跳转域名
+                                        targetUrl = prodMap[currentChannelCode];
+                                    } else {
+                                        // 没配置！在这个代理通道下不可见
+                                        isVisible = false; 
+                                    }
+                                }
+
+                                if (isVisible) {
+                                    validCount++;
+                                    const productItem = document.createElement('a');
+                                    productItem.href = targetUrl;
+                                    productItem.target = '_blank';
+                                    productItem.className = 'product-item';
+                                    
+                                    const img = document.createElement('img');
+                                    img.src = fixImageUrl(prod.icon);
+                                    // 若图标加载失败，显示默认灰色块
+                                    img.onerror = function() {
+                                        this.onerror = null;
+                                        this.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="55" height="55"><rect width="100%" height="100%" fill="%23f3f4f6"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="12" fill="%239ca3af">无图</text></svg>';
+                                    };
+                                    
+                                    const span = document.createElement('span');
+                                    span.textContent = prod.name;
+                                    
+                                    productItem.appendChild(img);
+                                    productItem.appendChild(span);
+                                    gridDiv.appendChild(productItem);
+                                }
+                            });
+                        }
+
+                        // 如果该板块下有产品显示，将其加入页面
+                        if (validCount > 0) {
+                            tabsContainer.appendChild(tabDiv);
+                            productsContainer.appendChild(gridDiv);
+                            
+                            // 默认激活第一个有内容的分类
+                            if (firstValidTabIndex === -1) {
+                                firstValidTabIndex = index;
+                                tabDiv.classList.add('active');
+                                gridDiv.classList.add('active');
+                            }
+                        }
+                    });
+
+                    // 如果所有分类下都没有产品显示（比如一个空白的代理通道）
+                    if (firstValidTabIndex === -1) {
+                        productsContainer.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">当前通道下暂无专属产品</div>';
+                    }
+
+                } else {
+                    productsContainer.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">暂无数据</div>';
+                }
+                
+                // 5. 渲染底部 Banners 
+                const bannersContainer = document.getElementById('bannersContainer');
+                bannersContainer.innerHTML = '';
+                if (data.banners && data.banners.length > 0) {
+                    data.banners.forEach(banner => {
+                        const bannerUrl = banner.url ? banner.url.trim() : '';
+                        const bannerDiv = document.createElement('a');
+                        bannerDiv.className = 'banner-item';
+                        
+                        // ✨ 链接空置处理：如果不填或填了#，点击不会有任何反应
+                        if (bannerUrl === '' || bannerUrl === '#') {
+                            bannerDiv.href = 'javascript:void(0);';
+                            bannerDiv.style.cursor = 'default';
+                        } else {
+                            bannerDiv.href = bannerUrl;
+                            bannerDiv.target = '_blank';
+                        }
+
+                        let imgHtml = banner.icon ? `<img src="${fixImageUrl(banner.icon)}">` : '';
+                        bannerDiv.innerHTML = `
+                            ${imgHtml}
+                            <div class="banner-text">
+                                <h3>${banner.title || ''}</h3>
+                                <p>${banner.subtitle || ''}</p>
+                            </div>
+                            <div class="banner-arrow" style="${(bannerUrl === '' || bannerUrl === '#') ? 'display:none;' : ''}">&gt;</div>
+                        `;
+                        bannersContainer.appendChild(bannerDiv);
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('数据加载失败:', error);
+                document.body.innerHTML = `
+                    <div style="display:flex;justify-content:center;align-items:center;height:100vh;background:#f5f7fb;color:#666;text-align:center;padding:20px;">
+                        <div>
+                            <h3>加载失败</h3>
+                            <p>无法获取数据，请刷新页面重试</p>
+                        </div>
+                    </div>
+                `;
+            });
+    });
+</script>
+</body>
+</html>
