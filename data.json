@@ -62,18 +62,15 @@
     "channels": [
         {
             "code": "85666",
-            "domain": "https:\/\/mydomain.com",
             "name": ""
         },
         {
             "code": "4g56sg",
-            "name": "主播视频",
-            "domain": "https:\/\/mydomain.com"
+            "name": "主播视频"
         },
         {
             "code": "zhuboship",
-            "name": "xx9",
-            "domain": "https:\/\/mydomain.com"
+            "name": "xx9"
         }
     ],
     "carousel_images": [
