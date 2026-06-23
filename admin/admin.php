@@ -362,13 +362,9 @@ if (!empty($data['product_channel_mapping'])) {
     foreach ($data['product_channel_mapping'] as $pid => $maps) { $totalMappingsCount += count($maps); }
 }
 
-// ==========================================
-// 🚀 核心：解析统计大屏与风云榜数据
-// ==========================================
 $statsFile = $rootDir . '/stats.json';
 $statsData = file_exists($statsFile) ? json_decode(file_get_contents($statsFile), true) : [];
 
-// 1. 最近 7 天的图表数据 (每日PV/UV)
 $chart7Dates = []; $chart7PV = []; $chart7UV = [];
 for ($i = 6; $i >= 0; $i--) {
     $d = date('Y-m-d', strtotime("-$i days"));
@@ -383,7 +379,6 @@ for ($i = 6; $i >= 0; $i--) {
     $chart7PV[] = $dayPv; $chart7UV[] = count($dayUvList);
 }
 
-// 2. 今日 24 小时的图表数据
 $todayStr = date('Y-m-d');
 $chart24Hours = []; $chart24PV = []; $chart24UV = [];
 for ($h = 0; $h <= 23; $h++) {
@@ -405,7 +400,6 @@ for ($h = 0; $h <= 23; $h++) {
     $chart24PV[] = $hPv; $chart24UV[] = count($hUvList);
 }
 
-// 3. 流量风云榜查询
 $maxDate = date('Y-m-d');
 $minDate = date('Y-m-d', strtotime('-30 days'));
 $rankDate = $_GET['rank_date'] ?? $maxDate;
@@ -426,7 +420,6 @@ if ($rankHour === 'all') {
     }
 }
 
-// 4. 解析访问日志并自动清理，增加 IP 搜索功能
 $logFile = $rootDir . '/access_logs.txt';
 $logData = [];
 $filterChannel = $_GET['log_channel'] ?? '';
@@ -442,8 +435,6 @@ if (file_exists($logFile)) {
             list($lTime, $lIp, $lCode) = $parts;
             if ($lTime >= $sevenDaysAgo) {
                 $keepLines[] = $line;
-                
-                // ✨ 日志筛选核心逻辑：同时匹配通道和IP（支持IP模糊搜索）
                 $matchChannel = ($filterChannel === '' || $filterChannel === $lCode);
                 $matchIp = ($searchIp === '' || stripos($lIp, $searchIp) !== false);
                 
@@ -453,11 +444,10 @@ if (file_exists($logFile)) {
             }
         }
     }
-    // 自动重写文件瘦身
     if (count($lines) > count($keepLines) + 200) {
         file_put_contents($logFile, implode(PHP_EOL, array_reverse($keepLines)) . PHP_EOL, LOCK_EX);
     }
-    $logData = array_slice($logData, 0, 500); // 页面最多显示最新 500 条防卡顿
+    $logData = array_slice($logData, 0, 500); 
 }
 
 if (empty($_SESSION['admin_logged'])) {
@@ -601,7 +591,7 @@ if (empty($_SESSION['admin_logged'])) {
                             <div class="form-group"><label>轮播图数量</label><div class="stats-number"><?php echo count($data['site_info']['carousel_images']??[]); ?></div></div>
                             <div class="form-group"><label>底部快捷链接数</label><div class="stats-number"><?php echo count($data['banners']??[]); ?></div></div>
                             <div class="form-group"><label>白名单IP防线数</label><div class="stats-number"><?php echo count($whitelist); ?></div></div>
-                            <div class="form-group"><label>您当前的公网IP</label><div style="font-size: 16px; color: var(--text-secondary); margin-top:5px; font-family:monospace;"><?php echo htmlspecialchars($current_ip); ?></div></div>
+                            <div class="form-group"><label>您当前的公网IP</label><div style="font-size: 16px; color: var(--text-secondary); margin-top:5px; font-family:monospace; font-weight:bold;"><?php echo htmlspecialchars($current_ip); ?></div></div>
                         </div>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
                             <div class="chart-box">
@@ -659,7 +649,6 @@ if (empty($_SESSION['admin_logged'])) {
                     </div>
                 </div>
 
-                <!-- ✨ 升级版：访客访问日志 (新增精准/模糊IP搜索功能) -->
                 <div id="access_logs" class="module-content <?php echo $activeModule === 'access_logs' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">👣 访客访问日志追踪</div>
@@ -735,7 +724,14 @@ if (empty($_SESSION['admin_logged'])) {
                                         </form>
                                     </td>
                                     <td><span style="color:#9ca3af; font-family:monospace;"><?php echo $t['id']; ?></span></td>
-                                    <td><form method="POST" onsubmit="return confirm('⚠️ 确定彻底删除吗？');"><input type="hidden" name="action" value="delete_tab"><input type="hidden" name="tab_id" value="<?php echo $t['id']; ?>"><button type="submit" class="action-btn btn-danger btn-sm">❌彻底删除</button></form></td>
+                                    <!-- ✨ 应用防误触弹窗：删除分类 -->
+                                    <td>
+                                        <form method="POST" onsubmit="confirmDelete(event, this, '确定要彻底删除该分类吗？<br><br><span style=\'color:red;font-weight:bold;\'>注意：这将连带删除该分类下的所有产品！此操作不可恢复！</span>');">
+                                            <input type="hidden" name="action" value="delete_tab">
+                                            <input type="hidden" name="tab_id" value="<?php echo $t['id']; ?>">
+                                            <button type="submit" class="action-btn btn-danger btn-sm">❌彻底删除</button>
+                                        </form>
+                                    </td>
                                 </tr>
                                 <?php endforeach; else: ?><tr><td colspan="3" style="text-align:center;">暂无分类</td></tr><?php endif; ?>
                             </tbody>
@@ -773,7 +769,18 @@ if (empty($_SESSION['admin_logged'])) {
                                     <td><span style="background:#f3f4f6; padding:3px 8px; border-radius:4px; font-size:12px; color:#4b5563;"><?php echo htmlspecialchars($t['name']); ?></span></td>
                                     <td><div style="display:flex; align-items:center; gap:10px;"><img src="<?php echo htmlspecialchars(getImgUrl($p['icon']??'')); ?>" style="width:30px; height:30px; border-radius:4px; object-fit:cover; border:1px solid #e5e7eb;"><strong style="font-size: 14px;"><?php echo htmlspecialchars($p['name']); ?></strong></div></td>
                                     <td><span style="color:#6b7280; font-size:12px;"><?php echo htmlspecialchars($p['url']); ?></span></td>
-                                    <td><div class="btn-group"><button class="action-btn btn-warning btn-sm" onclick="editProduct('<?php echo $t['id']; ?>', <?php echo $idx; ?>, '<?php echo htmlspecialchars($p['name']); ?>', '<?php echo htmlspecialchars($p['url']); ?>', '<?php echo htmlspecialchars($p['icon']??''); ?>')">修改</button><form method="POST" onsubmit="return confirm('确定删除？');"><input type="hidden" name="action" value="delete_product"><input type="hidden" name="tab_id" value="<?php echo $t['id']; ?>"><input type="hidden" name="index" value="<?php echo $idx; ?>"><button type="submit" class="action-btn btn-danger btn-sm">删除</button></form></div></td>
+                                    <td>
+                                        <div class="btn-group">
+                                            <button class="action-btn btn-warning btn-sm" onclick="editProduct('<?php echo $t['id']; ?>', <?php echo $idx; ?>, '<?php echo htmlspecialchars($p['name']); ?>', '<?php echo htmlspecialchars($p['url']); ?>', '<?php echo htmlspecialchars($p['icon']??''); ?>')">修改</button>
+                                            <!-- ✨ 应用防误触弹窗：删除产品 -->
+                                            <form method="POST" onsubmit="confirmDelete(event, this, '确定彻底删除该产品吗？<br><br><span style=\'color:#6b7280;\'>相关的代理通道映射也会被一并清除。</span>');">
+                                                <input type="hidden" name="action" value="delete_product">
+                                                <input type="hidden" name="tab_id" value="<?php echo $t['id']; ?>">
+                                                <input type="hidden" name="index" value="<?php echo $idx; ?>">
+                                                <button type="submit" class="action-btn btn-danger btn-sm">删除</button>
+                                            </form>
+                                        </div>
+                                    </td>
                                 </tr>
                                 <?php endforeach; endif; endforeach; endif; ?>
                             </tbody>
@@ -810,7 +817,14 @@ if (empty($_SESSION['admin_logged'])) {
                                             <button type="submit" class="btn btn-warning btn-sm">修改名称</button>
                                         </form>
                                     </td>
-                                    <td><form method="POST" onsubmit="return confirm('确定删除此通道？');"><input type="hidden" name="action" value="delete_channel"><input type="hidden" name="channel_index" value="<?php echo $i; ?>"><button type="submit" class="action-btn btn-danger btn-sm">删除</button></form></td>
+                                    <!-- ✨ 应用防误触弹窗：删除通道 -->
+                                    <td>
+                                        <form method="POST" onsubmit="confirmDelete(event, this, '确定删除此代理通道吗？<br><br><span style=\'color:red;font-weight:bold;\'>注意：所有使用该通道专属链接的配置将会失效！</span>');">
+                                            <input type="hidden" name="action" value="delete_channel">
+                                            <input type="hidden" name="channel_index" value="<?php echo $i; ?>">
+                                            <button type="submit" class="action-btn btn-danger btn-sm">删除</button>
+                                        </form>
+                                    </td>
                                 </tr>
                                 <?php endforeach; else: ?><tr><td colspan="3" style="text-align:center;">暂无通道配置</td></tr><?php endif; ?>
                             </tbody>
@@ -848,7 +862,13 @@ if (empty($_SESSION['admin_logged'])) {
                                     <td>
                                         <div class="btn-group">
                                             <button class="action-btn btn-outline btn-sm" onclick="showProductMappingModal('<?php echo $product['id']; ?>', '<?php echo htmlspecialchars($product['name']); ?>')">➕ 其他通道</button>
-                                            <form method="POST" onsubmit="return confirm('确定移除此代理映射？');"><input type="hidden" name="action" value="delete_channel_mapping"><input type="hidden" name="product_id" value="<?php echo $product['id']; ?>"><input type="hidden" name="channel_code" value="<?php echo htmlspecialchars($channelCode); ?>"><button type="submit" class="action-btn btn-danger btn-sm">删除</button></form>
+                                            <!-- ✨ 应用防误触弹窗：删除映射 -->
+                                            <form method="POST" onsubmit="confirmDelete(event, this, '确定移除此代理映射关系吗？');">
+                                                <input type="hidden" name="action" value="delete_channel_mapping">
+                                                <input type="hidden" name="product_id" value="<?php echo $product['id']; ?>">
+                                                <input type="hidden" name="channel_code" value="<?php echo htmlspecialchars($channelCode); ?>">
+                                                <button type="submit" class="action-btn btn-danger btn-sm">删除</button>
+                                            </form>
                                         </div>
                                     </td>
                                 </tr>
@@ -876,7 +896,12 @@ if (empty($_SESSION['admin_logged'])) {
                             <?php if (!empty($data['site_info']['carousel_images'])): foreach ($data['site_info']['carousel_images'] as $i => $img): ?>
                                 <div class="carousel-item">
                                     <img src="<?php echo htmlspecialchars(getImgUrl($img)); ?>" class="carousel-image">
-                                    <form method="POST" onsubmit="return confirm('确定彻底删除这张轮播图吗？');" style="width:100%;"><input type="hidden" name="action" value="delete_carousel"><input type="hidden" name="carousel_index" value="<?php echo $i; ?>"><button type="submit" class="action-btn btn-danger" style="width:100%;">🗑️ 删除</button></form>
+                                    <!-- ✨ 应用防误触弹窗：删除轮播图 -->
+                                    <form method="POST" onsubmit="confirmDelete(event, this, '确定彻底删除这张轮播图吗？');" style="width:100%;">
+                                        <input type="hidden" name="action" value="delete_carousel">
+                                        <input type="hidden" name="carousel_index" value="<?php echo $i; ?>">
+                                        <button type="submit" class="action-btn btn-danger" style="width:100%;">🗑️ 删除</button>
+                                    </form>
                                 </div>
                             <?php endforeach; else: ?><div style="grid-column:1/-1; padding:20px; text-align:center;">暂无轮播图片</div><?php endif; ?>
                         </div>
@@ -938,13 +963,46 @@ if (empty($_SESSION['admin_logged'])) {
                     </div>
                 </div>
 
-                <div id="whitelist" class="module-content <?php echo $activeModule === 'whitelist' ? 'active' : ''; ?>"><div class="card"><div class="card-header">🛡️ IP白名单管理 (安全防线)</div><form method="POST" style="display:flex; gap:12px; margin-bottom:20px;"><input type="hidden" name="action" value="add_ip"><input type="text" name="ip" class="form-control" placeholder="输入要强制放行的IP" required><button type="submit" class="btn btn-primary">➕ 加白</button></form><div style="background: white; border: 1px solid var(--border-color); border-radius: var(--radius-base); overflow: hidden;"><?php if (!empty($whitelist)): foreach ($whitelist as $ip): ?><div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span style="font-family: monospace; font-size: 15px;"><?php echo htmlspecialchars($ip); ?></span><form method="POST" style="margin:0;" onsubmit="return confirm('确定移除？移除后该IP将无法访问后台！');"><input type="hidden" name="action" value="delete_ip"><input type="hidden" name="ip" value="<?php echo htmlspecialchars($ip); ?>"><button type="submit" class="action-btn btn-danger">移除拦截</button></form></div><?php endforeach; else: ?><div style="padding:20px; text-align:center; color:#9ca3af;">当前没有任何白名单，只要知道密码任何人都能登录</div><?php endif; ?></div></div></div>
+                <div id="whitelist" class="module-content <?php echo $activeModule === 'whitelist' ? 'active' : ''; ?>">
+                    <div class="card">
+                        <div class="card-header">🛡️ IP白名单管理 (安全防线)</div>
+                        <form method="POST" style="display:flex; gap:12px; margin-bottom:20px;">
+                            <input type="hidden" name="action" value="add_ip"><input type="text" name="ip" class="form-control" placeholder="输入要强制放行的IP" required><button type="submit" class="btn btn-primary">➕ 加白</button>
+                        </form>
+                        <div style="background: white; border: 1px solid var(--border-color); border-radius: var(--radius-base); overflow: hidden;">
+                            <?php if (!empty($whitelist)): foreach ($whitelist as $ip): ?>
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border-color);">
+                                    <span style="font-family: monospace; font-size: 15px;"><?php echo htmlspecialchars($ip); ?></span>
+                                    <!-- ✨ 应用防误触弹窗：删除白名单 IP -->
+                                    <form method="POST" onsubmit="confirmDelete(event, this, '确定移除该 IP 的白名单权限吗？<br><br><span style=\'color:red;font-weight:bold;\'>注意：如果这是您自己的 IP，移除后您将立即被踢出后台！</span>');">
+                                        <input type="hidden" name="action" value="delete_ip">
+                                        <input type="hidden" name="ip" value="<?php echo htmlspecialchars($ip); ?>">
+                                        <button type="submit" class="action-btn btn-danger">移除拦截</button>
+                                    </form>
+                                </div>
+                            <?php endforeach; else: ?><div style="padding:20px; text-align:center; color:#9ca3af;">当前没有任何白名单，只要知道密码任何人都能登录</div><?php endif; ?>
+                        </div>
+                    </div>
+                </div>
 
             </main>
         </div>
     </div>
 
-    <!-- 模态框区 -->
+    <!-- ✨✨✨ 高级防误触警告弹窗 (全局共用) ✨✨✨ -->
+    <div id="deleteConfirmModal" class="modal">
+        <div class="modal-content" style="max-width: 400px; text-align: center; padding-top: 40px;">
+            <div style="font-size: 48px; margin-bottom: 15px;">⚠️</div>
+            <h3 style="color: var(--danger-color); margin-bottom: 15px;">高危操作确认</h3>
+            <p id="deleteConfirmMessage" style="margin-bottom: 30px; color: var(--text-secondary); line-height: 1.6; font-size: 15px;"></p>
+            <div class="modal-actions" style="justify-content: center; gap: 15px;">
+                <button type="button" class="btn btn-outline" onclick="closeModal('deleteConfirmModal')">点错了，取消</button>
+                <button type="button" class="btn btn-danger" onclick="executeDelete()">确认彻底删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模态框区 (修改产品/增加映射等) -->
     <div id="editModal" class="modal">
         <div class="modal-content"><div class="modal-header">✏️ 编辑产品</div><form method="POST" enctype="multipart/form-data"><input type="hidden" name="action" value="update_product"><input type="hidden" name="tab_id" id="editTabId"><input type="hidden" name="index" id="editIndex"><div class="form-group"><label>产品名称</label><input type="text" name="name" id="editName" class="form-control" required></div><div class="form-group"><label>平台默认跳转链接</label><input type="text" name="url" id="editUrl" class="form-control" required></div><div class="form-group"><label>更换图标 (选填)</label><input type="file" name="icon_file" class="form-control" accept="image/*"></div><div class="form-group"><label>外链图标</label><input type="text" name="icon_url" id="editIconUrl" class="form-control"></div><div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal('editModal')">取消</button><button type="submit" class="btn btn-primary">保存修改</button></div></form></div>
     </div>
@@ -999,6 +1057,20 @@ if (empty($_SESSION['admin_logged'])) {
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
         document.querySelectorAll('.modal').forEach(modal => { modal.addEventListener('click', function(e) { if (e.target === this) this.style.display = 'none'; }); });
 
+        // ✨ 高级防误触系统：拦截表单默认提交，弹出自定义框
+        let currentDeleteForm = null;
+        function confirmDelete(event, form, message) {
+            event.preventDefault(); // 阻止浏览器直接提交
+            currentDeleteForm = form;
+            document.getElementById('deleteConfirmMessage').innerHTML = message;
+            openModal('deleteConfirmModal');
+        }
+        function executeDelete() {
+            if (currentDeleteForm) {
+                currentDeleteForm.submit(); // 用户在弹窗点击确认后，才真正提交
+            }
+        }
+
         function editProduct(tabId, index, name, url, iconUrl) {
             document.getElementById('editTabId').value = tabId; document.getElementById('editIndex').value = index;
             document.getElementById('editName').value = name; document.getElementById('editUrl').value = url;
@@ -1031,6 +1103,7 @@ if (empty($_SESSION['admin_logged'])) {
         }
     </script>
 
+    <!-- ✨ 渲染 Chart.js 流量折线图 (仅在数据大屏渲染) -->
     <?php if ($activeModule === 'dashboard'): ?>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
