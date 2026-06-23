@@ -2,7 +2,7 @@
 // 引入同目录下的统一安全配置文件
 require_once __DIR__ . '/config.php'; 
 
-// 独立将白名单 IP 数据存储在 admin/whitelist.json
+// 独立将白名单 IP 数据存储在 whitelist.json
 $DATA_FILE  = __DIR__ . '/whitelist.json'; 
 
 // 初始化数据文件
@@ -34,13 +34,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $input_pass = ''; // 密码错误时清空输入框
     } else {
         $is_verified = true; // ✨ 密码正确！解锁显示列表的权限
-        $whitelist = json_decode(file_get_contents($DATA_FILE), true) ?: [];
+        $raw_whitelist = json_decode(file_get_contents($DATA_FILE), true) ?: [];
+        
+        // ✨ 核心修复：兼容新老数据格式，防止报错
+        $whitelist = [];
+        $whitelist_ips = [];
+        foreach ($raw_whitelist as $item) {
+            if (is_string($item)) {
+                $whitelist[] = ['ip' => $item, 'time' => '早期记录'];
+                $whitelist_ips[] = $item;
+            } elseif (is_array($item) && isset($item['ip'])) {
+                $whitelist[] = $item;
+                $whitelist_ips[] = $item['ip'];
+            }
+        }
 
         if ($action === 'add') {
             $new_ip = trim($_POST['ip'] ?? '');
             if (filter_var($new_ip, FILTER_VALIDATE_IP)) {
-                if (!in_array($new_ip, $whitelist)) {
-                    $whitelist[] = $new_ip;
+                if (!in_array($new_ip, $whitelist_ips)) {
+                    // 新增时打上时间戳
+                    $whitelist[] = ['ip' => $new_ip, 'time' => date('Y-m-d H:i:s')];
                     file_put_contents($DATA_FILE, json_encode(array_values($whitelist), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
                     $message = "<div class='alert alert-success'>✅ 成功将 IP [{$new_ip}] 加入白名单！</div>";
                 } else {
@@ -51,8 +65,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } elseif ($action === 'delete') {
             $del_ip = trim($_POST['ip'] ?? '');
-            $whitelist = array_values(array_filter($whitelist, function($ip) use ($del_ip) {
-                return $ip !== $del_ip;
+            $whitelist = array_values(array_filter($whitelist, function($item) use ($del_ip) {
+                return $item['ip'] !== $del_ip;
             }));
             file_put_contents($DATA_FILE, json_encode($whitelist, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
             $message = "<div class='alert alert-success'>🗑️ 已将 IP [{$del_ip}] 从白名单移除！</div>";
@@ -62,8 +76,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// 只有当身份验证通过时，才去读取真实数据发给前端，否则给个空壳
-$whitelist_data = $is_verified ? (json_decode(file_get_contents($DATA_FILE), true) ?: []) : [];
+// 只有当身份验证通过时，才去读取真实数据发给前端，并且格式化为数组保障不出错
+$raw_data = $is_verified ? (json_decode(file_get_contents($DATA_FILE), true) ?: []) : [];
+$whitelist_data = [];
+foreach ($raw_data as $item) {
+    if (is_string($item)) {
+        $whitelist_data[] = ['ip' => $item, 'time' => '早期记录'];
+    } elseif (is_array($item)) {
+        $whitelist_data[] = $item;
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -107,8 +129,10 @@ $whitelist_data = $is_verified ? (json_decode(file_get_contents($DATA_FILE), tru
         .ip-list { border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; background: #fff; }
         .ip-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid #e2e8f0; font-size: 14px; }
         .ip-item:last-child { border-bottom: none; }
-        .ip-value { font-family: monospace; font-size: 15px; display: flex; align-items: center; gap: 6px; }
+        .ip-value { font-family: monospace; font-size: 15px; display: flex; flex-direction: column; gap: 4px; }
+        .ip-value-top { display: flex; align-items: center; gap: 6px; }
         .badge { background: #10b981; color: white; font-size: 11px; padding: 1px 6px; border-radius: 10px; }
+        .time-badge { font-size: 11px; color: #94a3b8; }
         .btn-delete { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 13px; font-weight: 500; }
         .btn-delete:hover { color: var(--danger-hover); text-decoration: underline; }
         .empty-tips { padding: 20px; text-align: center; color: #94a3b8; font-size: 13px; }
@@ -151,13 +175,19 @@ $whitelist_data = $is_verified ? (json_decode(file_get_contents($DATA_FILE), tru
         <?php if ($is_verified): ?>
             <div class="ip-list">
                 <?php if (!empty($whitelist_data)): ?>
-                    <?php foreach ($whitelist_data as $ip): ?>
+                    <?php foreach ($whitelist_data as $item): 
+                        $ipStr = $item['ip'] ?? '';
+                        $timeStr = $item['time'] ?? '早期记录';
+                    ?>
                         <div class="ip-item">
                             <div class="ip-value">
-                                <?php echo htmlspecialchars($ip); ?>
-                                <?php if ($ip === $current_ip): ?><span class="badge">您的当前IP</span><?php endif; ?>
+                                <div class="ip-value-top">
+                                    <?php echo htmlspecialchars($ipStr); ?>
+                                    <?php if ($ipStr === $current_ip): ?><span class="badge">您的当前IP</span><?php endif; ?>
+                                </div>
+                                <span class="time-badge">录入时间: <?php echo htmlspecialchars($timeStr); ?></span>
                             </div>
-                            <button type="button" class="btn-delete" onclick="deleteIp('<?php echo htmlspecialchars($ip); ?>')">❌ 移除</button>
+                            <button type="button" class="btn-delete" onclick="deleteIp('<?php echo htmlspecialchars($ipStr); ?>')">❌ 移除</button>
                         </div>
                     <?php endforeach; ?>
                 <?php else: ?>
