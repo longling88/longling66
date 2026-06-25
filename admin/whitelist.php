@@ -10,35 +10,40 @@ if (!file_exists($DATA_FILE)) {
     file_put_contents($DATA_FILE, json_encode([]));
 }
 
-// 获取真实访客 IP
+// 终极获取真实访客 IP 引擎 (完美穿透 Cloudflare 等各种 CDN 与反代)
 function getRealIp() {
     if (isset($_SERVER["HTTP_CF_CONNECTING_IP"])) {
         return $_SERVER["HTTP_CF_CONNECTING_IP"];
+    }
+    if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+        return trim($ips[0]);
     }
     return $_SERVER['REMOTE_ADDR'] ?? '未知 IP';
 }
 
 $current_ip = getRealIp();
 $message = '';
-$is_verified = false; // ✨ 核心开关：默认验证失败，列表锁死
-$input_pass = '';     // 暂存用户填写的密码，体验优化
+$is_verified = false; // 核心开关：默认验证失败，列表锁死
+$input_pass = '';     // 暂存用户填写的密码
 
 // 处理表单提交 (加白 / 删除 / 查看)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     $input_pass = $_POST['password'] ?? '';
 
-    // ✨ 核心修改：死死校验 IP加白专用密码
+    // 死死校验 IP加白专用密码
     if ($input_pass !== $WHITELIST_PASS) {
         $message = "<div class='alert alert-error'>❌ 专属安全密码错误！验证失败。</div>";
-        $input_pass = ''; // 密码错误时清空输入框
+        $input_pass = ''; 
     } else {
-        $is_verified = true; // ✨ 密码正确！解锁显示列表的权限
-        $raw_whitelist = json_decode(file_get_contents($DATA_FILE), true) ?: [];
+        $is_verified = true; // 密码正确！解锁权限
         
-        // ✨ 核心修复：兼容新老数据格式，防止报错
+        // ✨ 核心修复：安全解析数据，完美兼容新老格式
+        $raw_whitelist = json_decode(file_get_contents($DATA_FILE), true) ?: [];
         $whitelist = [];
         $whitelist_ips = [];
+        
         foreach ($raw_whitelist as $item) {
             if (is_string($item)) {
                 $whitelist[] = ['ip' => $item, 'time' => '早期记录'];
@@ -53,37 +58,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $new_ip = trim($_POST['ip'] ?? '');
             if (filter_var($new_ip, FILTER_VALIDATE_IP)) {
                 if (!in_array($new_ip, $whitelist_ips)) {
-                    // 新增时打上时间戳
+                    // 新增时打上标准时间戳
                     $whitelist[] = ['ip' => $new_ip, 'time' => date('Y-m-d H:i:s')];
                     file_put_contents($DATA_FILE, json_encode(array_values($whitelist), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-                    $message = "<div class='alert alert-success'>✅ 成功将 IP [{$new_ip}] 加入白名单！</div>";
+                    $message = "<div class='alert alert-success'>✅ 成功将 IP [{$new_ip}] 强制放行并加入白名单！</div>";
                 } else {
-                    $message = "<div class='alert alert-warning'>⚠️ 该 IP 已经在白名单中。</div>";
+                    $message = "<div class='alert alert-warning'>⚠️ 该 IP 已经在白名单中，无需重复添加。</div>";
                 }
             } else {
                 $message = "<div class='alert alert-error'>❌ 请输入有效的 IP 地址！</div>";
             }
         } elseif ($action === 'delete') {
             $del_ip = trim($_POST['ip'] ?? '');
+            // ✨ 修复删除逻辑：准确比对数组中的 ip 字段
             $whitelist = array_values(array_filter($whitelist, function($item) use ($del_ip) {
                 return $item['ip'] !== $del_ip;
             }));
             file_put_contents($DATA_FILE, json_encode($whitelist, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-            $message = "<div class='alert alert-success'>🗑️ 已将 IP [{$del_ip}] 从白名单移除！</div>";
+            $message = "<div class='alert alert-success'>🗑️ 已将 IP [{$del_ip}] 从白名单移除拦截！</div>";
         } elseif ($action === 'view') {
             $message = "<div class='alert alert-success'>🔓 密码验证成功！已为您解锁并显示白名单列表。</div>";
         }
     }
 }
 
-// 只有当身份验证通过时，才去读取真实数据发给前端，并且格式化为数组保障不出错
-$raw_data = $is_verified ? (json_decode(file_get_contents($DATA_FILE), true) ?: []) : [];
+// 身份验证通过后，准备最新数据给前端渲染
 $whitelist_data = [];
-foreach ($raw_data as $item) {
-    if (is_string($item)) {
-        $whitelist_data[] = ['ip' => $item, 'time' => '早期记录'];
-    } elseif (is_array($item)) {
-        $whitelist_data[] = $item;
+if ($is_verified) {
+    $raw_data = json_decode(file_get_contents($DATA_FILE), true) ?: [];
+    foreach ($raw_data as $item) {
+        if (is_string($item)) {
+            $whitelist_data[] = ['ip' => $item, 'time' => '早期记录'];
+        } elseif (is_array($item)) {
+            $whitelist_data[] = $item;
+        }
     }
 }
 ?>
@@ -182,7 +190,7 @@ foreach ($raw_data as $item) {
                         <div class="ip-item">
                             <div class="ip-value">
                                 <div class="ip-value-top">
-                                    <?php echo htmlspecialchars($ip['ip']); ?>
+                                    <?php echo htmlspecialchars($ipStr); ?>
                                     <?php if ($ipStr === $current_ip): ?><span class="badge">您的当前IP</span><?php endif; ?>
                                 </div>
                                 <span class="time-badge">录入时间: <?php echo htmlspecialchars($timeStr); ?></span>
@@ -219,7 +227,7 @@ function deleteIp(ip) {
         document.getElementById('sysPassword').focus();
         return;
     }
-    if (confirm('确定要将该 IP [' + ip + '] 从白名单拦截规则中移除吗？')) {
+    if (confirm('确定要将该 IP [' + ip + '] 从白名单拦截规则中彻底移除吗？')) {
         document.getElementById('deleteIpInput').value = ip;
         document.getElementById('deletePwdInput').value = pwd;
         document.getElementById('deleteForm').submit();
