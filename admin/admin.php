@@ -1,8 +1,65 @@
 <?php
+// ==========================================
+// 🚀 终极防死循环配置：强行接管 Session 与缓存（只保留一份）
+// ==========================================
+$session_path = __DIR__ . '/sessions'; 
+if (!is_dir($session_path)) { mkdir($session_path, 0777, true); }
+session_save_path($session_path);
+
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Cache-Control: post-check=0, pre-check=0", false);
+header("Pragma: no-cache");
+
 session_start();
+
+// ==========================================
+// 🛡️ 核心 IP 白名单高强度拦截引擎（统一路径）
+// ==========================================
+function getAdminRealIp() {
+    if (isset($_SERVER["HTTP_CF_CONNECTING_IP"])) return $_SERVER["HTTP_CF_CONNECTING_IP"];
+    if (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+        return trim($ips[0]);
+    }
+    return $_SERVER['REMOTE_ADDR'] ?? '未知IP';
+}
+
+$current_admin_ip = getAdminRealIp();
+$absolute_whitelist_file = __DIR__ . '/whitelist.json';   // 统一路径
+
+// 第一个检查点：直接读文件
+$is_ip_allowed = false;
+if (file_exists($absolute_whitelist_file)) {
+    $whitelist_array = json_decode(file_get_contents($absolute_whitelist_file), true);
+    if (is_array($whitelist_array)) {
+        foreach ($whitelist_array as $allowed) {
+            if (isset($allowed['ip']) && $allowed['ip'] === $current_admin_ip) {
+                $is_ip_allowed = true;
+                break;
+            }
+        }
+    }
+}
+
+if (!$is_ip_allowed) {
+    header('HTTP/1.1 403 Forbidden');
+    die('
+    <div style="text-align:center; margin-top:100px; font-family:sans-serif; color:#333;">
+        <h1 style="color:#ef4444; font-size: 60px; margin-bottom: 10px;">⛔</h1>
+        <h2 style="font-size:24px;">403 Access Denied</h2>
+        <p style="font-size:16px; color:#4b5563;">安全系统拦截：您的当前网络 IP 未经授权，禁止访问后台管理系统。</p>
+        <p style="color:#666; font-size:14px; margin-top:20px;">您的当前公网 IP: <b style="color:#2563eb; background:#eff6ff; padding:4px 8px; border-radius:4px;">' . htmlspecialchars($current_admin_ip) . '</b></p>
+        <p style="color:#9ca3af; font-size:12px; margin-top:10px;">请联系管理员将此 IP 添加至白名单。</p>
+    </div>
+    ');
+}
+
+// ==========================================
+// 引入配置与初始化数据
+// ==========================================
 require __DIR__ . '/config.php';
 
-$whitelistFile = __DIR__ . '/whitelist.json'; 
+$whitelistFile = __DIR__ . '/whitelist.json';   // 统一路径
 $rootDir = realpath(__DIR__ . '/../'); 
 $dataFile = $rootDir . '/data.json';
 $uploadDir = $rootDir . '/uploads/';
@@ -10,7 +67,6 @@ $uploadDir = $rootDir . '/uploads/';
 if (!is_dir($uploadDir)) { mkdir($uploadDir, 0777, true); }
 if (!file_exists($whitelistFile)) { file_put_contents($whitelistFile, json_encode([])); }
 
-// 初始化数据
 $now = date('Y-m-d H:i:s');
 if (!file_exists($dataFile)) {
     $defaultData = [
@@ -29,42 +85,91 @@ if (!file_exists($dataFile)) {
     file_put_contents($dataFile, json_encode($defaultData, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
 }
 
-// 自动迁移老数据，并修复默认分类逻辑
 $data = json_decode(file_get_contents($dataFile), true);
 $needsSave = false;
 
+// ==========================================
+// 🔧 数据自动修复与去重
+// ==========================================
 if (!isset($data['mapping_times'])) { $data['mapping_times'] = []; $needsSave = true; }
 if (!isset($data['carousel_times'])) { $data['carousel_times'] = []; $needsSave = true; }
 
-$defaultTabCount = 0;
-if(isset($data['tabs'])) {
-    foreach ($data['tabs'] as $k => &$t) {
-        if (empty($t['time'])) { $t['time'] = $now; $needsSave = true; }
-        // ✨ 自动纠错机制：确保最多只有一个默认板块
-        if (!empty($t['is_default'])) {
-            $defaultTabCount++;
-            if ($defaultTabCount > 1) {
-                $t['is_default'] = false; // 发现多余的默认，强制取消
+// 产品去重（按 id）
+if (!empty($data['tabs'])) {
+    foreach ($data['tabs'] as &$t) {
+        $tabId = $t['id'];
+        if (isset($data['products'][$tabId]) && is_array($data['products'][$tabId])) {
+            $unique = [];
+            $seenIds = [];
+            foreach ($data['products'][$tabId] as $p) {
+                if (!empty($p['id']) && !in_array($p['id'], $seenIds)) {
+                    $seenIds[] = $p['id'];
+                    $unique[] = $p;
+                } elseif (empty($p['id'])) {
+                    $p['id'] = 'prod_' . uniqid() . rand(1000,9999);
+                    $unique[] = $p;
+                    $needsSave = true;
+                }
+                if (empty($p['code'])) { $p['code'] = ''; $needsSave = true; }
+                if (empty($p['time'])) { $p['time'] = $now; $needsSave = true; }
+            }
+            if (count($unique) != count($data['products'][$tabId])) {
+                $data['products'][$tabId] = $unique;
                 $needsSave = true;
             }
         }
-        if (!empty($data['products'][$t['id']])) {
-            foreach ($data['products'][$t['id']] as $idx => &$p) {
-                if (empty($p['id'])) { $p['id'] = 'prod_' . uniqid() . rand(1000,9999); $needsSave = true; }
-                if (empty($p['time'])) { $p['time'] = $now; $needsSave = true; }
+    }
+}
+
+// 通道映射去重（按 product_id + channel_code）
+if (!empty($data['product_channel_mapping'])) {
+    foreach ($data['product_channel_mapping'] as $pid => $maps) {
+        if (is_array($maps)) {
+            $uniqueMaps = [];
+            foreach ($maps as $code => $domain) {
+                $uniqueMaps[$code] = $domain;
+            }
+            if (count($uniqueMaps) != count($maps)) {
+                $data['product_channel_mapping'][$pid] = $uniqueMaps;
+                $needsSave = true;
             }
         }
     }
-    // 强制保障至少有一个默认板块
+}
+
+// 其他修复
+$defaultTabCount = 0;
+$seenTabIds = [];
+if(isset($data['tabs'])) {
+    foreach ($data['tabs'] as $k => &$t) {
+        if (empty($t['time'])) { $t['time'] = $now; $needsSave = true; }
+        if (!empty($t['is_default'])) {
+            $defaultTabCount++;
+            if ($defaultTabCount > 1) {
+                $t['is_default'] = false;
+                $needsSave = true;
+            }
+        }
+        if (isset($seenTabIds[$t['id']])) {
+            $newId = uniqid('tab_') . '_' . bin2hex(random_bytes(4));
+            $t['id'] = $newId;
+            if (isset($data['products'][$t['id']])) {
+                $data['products'][$newId] = $data['products'][$t['id']];
+                unset($data['products'][$t['id']]);
+            } else {
+                $data['products'][$newId] = [];
+            }
+            $needsSave = true;
+        }
+        $seenTabIds[$t['id']] = true;
+    }
     if ($defaultTabCount === 0 && count($data['tabs']) > 0) {
         $data['tabs'][0]['is_default'] = true;
         $needsSave = true;
     }
 }
 if(isset($data['channels'])) {
-    foreach ($data['channels'] as &$ch) {
-        if (empty($ch['time'])) { $ch['time'] = $now; $needsSave = true; }
-    }
+    foreach ($data['channels'] as &$ch) { if (empty($ch['time'])) { $ch['time'] = $now; $needsSave = true; } }
 }
 if(isset($data['banners'])) {
     foreach ($data['banners'] as $k => &$b) {
@@ -74,23 +179,61 @@ if(isset($data['banners'])) {
 }
 if ($needsSave) { file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)); }
 
-// 白名单升级
+// ==========================================
+// 白名单读取（全局变量）—— 第二个检查点将使用这些变量
+// ==========================================
 $whitelistRaw = json_decode(file_get_contents($whitelistFile), true) ?: [];
 $whitelist = [];
 $whitelistIps = [];
-$wlNeedsSave = false;
 foreach ($whitelistRaw as $item) {
     if (is_string($item)) {
-        $whitelist[] = ['ip' => $item, 'time' => $now];
+        $whitelist[] = ['ip' => $item, 'time' => '早期'];
         $whitelistIps[] = $item;
-        $wlNeedsSave = true;
     } else {
         $whitelist[] = $item;
         $whitelistIps[] = $item['ip'];
     }
 }
-if ($wlNeedsSave) { file_put_contents($whitelistFile, json_encode($whitelist, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT)); }
 
+// ==========================================
+// 应急加白功能（放在白名单变量定义之后，保证加白后能同步更新）
+// ==========================================
+if (isset($_GET['add_my_ip']) && $_GET['add_my_ip'] == 1) {
+    $ip = getAdminRealIp();
+    $file = __DIR__ . '/whitelist.json';
+    $current = json_decode(file_get_contents($file), true) ?: [];
+    // 去重
+    $exists = false;
+    foreach ($current as $item) {
+        if (is_string($item) && $item === $ip) { $exists = true; break; }
+        if (is_array($item) && isset($item['ip']) && $item['ip'] === $ip) { $exists = true; break; }
+    }
+    if (!$exists) {
+        $current[] = ['ip' => $ip, 'time' => date('Y-m-d H:i:s')];
+        file_put_contents($file, json_encode($current, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+        // 重新加载白名单变量，使后续检查生效
+        $whitelistRaw = json_decode(file_get_contents($file), true) ?: [];
+        $whitelist = [];
+        $whitelistIps = [];
+        foreach ($whitelistRaw as $item) {
+            if (is_string($item)) {
+                $whitelist[] = ['ip' => $item, 'time' => '早期'];
+                $whitelistIps[] = $item;
+            } else {
+                $whitelist[] = $item;
+                $whitelistIps[] = $item['ip'];
+            }
+        }
+        echo "✅ 已将您的 IP ($ip) 加入白名单，请刷新页面。";
+    } else {
+        echo "⚠️ 您的 IP ($ip) 已在白名单中。";
+    }
+    exit;
+}
+
+// ==========================================
+// 验证码（保持不变）
+// ==========================================
 if (empty($_SESSION['captcha_num1']) || (isset($_GET['action']) && $_GET['action'] === 'logout')) {
     $_SESSION['captcha_num1'] = rand(1, 9);
     $_SESSION['captcha_num2'] = rand(1, 9);
@@ -109,11 +252,6 @@ function getImgUrl($path) {
     return '/' . ltrim($path, '/');
 }
 
-if (!empty($whitelistIps) && !in_array($current_ip, $whitelistIps)) {
-    header('HTTP/1.1 403 Forbidden');
-    exit("<div style='text-align:center;margin-top:50px;'><h2>403 Forbidden</h2><p>您的 IP不在白名单中</p></div>");
-}
-
 $message = '';
 $activeModule = $_GET['module'] ?? 'dashboard';
 
@@ -125,9 +263,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'logout') {
 
 $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 
-// ==========================================
-// 🚀 核心 POST 逻辑处理
-// ==========================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
@@ -173,11 +308,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = "<div class='alert alert-success'>✅ 全局配置更新成功！</div>";
         }
 
+        // --- 分类板块管理 ---
         if ($action === 'set_default_tab') {
-            $tabId = $_POST['tab_id'] ?? '';
-            foreach ($data['tabs'] as &$t) { $t['is_default'] = ($t['id'] === $tabId); }
-            file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-            $message = "<div class='alert alert-success'>✅ 已成功更改默认板块！</div>";
+            $idx = (int)($_POST['index'] ?? -1);
+            if (isset($data['tabs'][$idx])) {
+                foreach ($data['tabs'] as $k => &$t) { $t['is_default'] = ($k === $idx); }
+                file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $message = "<div class='alert alert-success'>✅ 已成功更改默认板块！</div>";
+            }
         }
         if ($action === 'move_tab_up') {
             $idx = (int)($_POST['index'] ?? -1);
@@ -196,7 +334,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'add_tab') {
             $name = trim($_POST['tab_name'] ?? '');
             if ($name) {
-                $tabId = 'tab_' . time() . rand(100,999);
+                $tabId = uniqid('tab_') . '_' . bin2hex(random_bytes(4));
                 $isDef = (count($data['tabs']) === 0);
                 $data['tabs'][] = ['id' => $tabId, 'name' => $name, 'max' => 100, 'time' => $now, 'is_default' => $isDef];
                 $data['products'][$tabId] = [];
@@ -205,26 +343,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         if ($action === 'edit_tab') {
-            $tabId = $_POST['tab_id'] ?? ''; $name = trim($_POST['tab_name'] ?? '');
-            if ($tabId && $name) {
-                foreach ($data['tabs'] as &$t) { if ($t['id'] === $tabId) { $t['name'] = $name; $t['time'] = $now; break; } }
+            $idx = (int)($_POST['index'] ?? -1); $name = trim($_POST['tab_name'] ?? '');
+            if (isset($data['tabs'][$idx]) && $name) {
+                $data['tabs'][$idx]['name'] = $name;
+                $data['tabs'][$idx]['time'] = $now;
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
                 $message = "<div class='alert alert-success'>✅ 分类名称修改成功！</div>";
             }
         }
         if ($action === 'delete_tab') {
-            $tabId = $_POST['tab_id'] ?? '';
-            if (count($data['tabs']) <= 1) {
-                $message = "<div class='alert alert-error'>❌ 删除失败：系统至少需要保留一个分类板块！</div>";
-            } else {
-                $isDefault = false;
-                foreach ($data['tabs'] as $t) { if ($t['id'] === $tabId && !empty($t['is_default'])) { $isDefault = true; } }
-                if ($isDefault) {
+            $idx = (int)($_POST['index'] ?? -1);
+            if (isset($data['tabs'][$idx])) {
+                if (count($data['tabs']) <= 1) {
+                    $message = "<div class='alert alert-error'>❌ 删除失败：系统至少需要保留一个分类板块！</div>";
+                } elseif (!empty($data['tabs'][$idx]['is_default'])) {
                     $message = "<div class='alert alert-error'>❌ 删除失败：默认板块不可删除！请先将其他板块设为默认。</div>";
                 } else {
-                    foreach ($data['tabs'] as $k => $t) {
-                        if ($t['id'] === $tabId) { unset($data['tabs'][$k]); unset($data['products'][$tabId]); break; }
-                    }
+                    $deletedTabId = $data['tabs'][$idx]['id'];
+                    unset($data['tabs'][$idx]);
+                    unset($data['products'][$deletedTabId]);
                     $data['tabs'] = array_values($data['tabs']); 
                     file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
                     $message = "<div class='alert alert-success'>✅ 分类及旗下产品已彻底删除！</div>";
@@ -232,48 +369,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        // --- 产品管理 ---
         if ($action === 'move_product_up') {
             $tabId = $_POST['tab_id'] ?? ''; $idx = (int)($_POST['index'] ?? -1);
-            if ($idx > 0 && isset($data['products'][$tabId][$idx])) {
+            if (isset($data['products'][$tabId][$idx]) && $idx > 0) {
                 $tmp = $data['products'][$tabId][$idx-1]; $data['products'][$tabId][$idx-1] = $data['products'][$tabId][$idx]; $data['products'][$tabId][$idx] = $tmp;
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
+                $message = "<div class='alert alert-success'>✅ 产品上移成功！</div>";
             }
         }
         if ($action === 'move_product_down') {
-            $tabId = $_POST['tab_id'] ?? ''; $idx = (int)($_POST['index'] ?? -1); $total = count($data['products'][$tabId] ?? []);
-            if ($idx >= 0 && $idx < $total - 1 && isset($data['products'][$tabId][$idx])) {
+            $tabId = $_POST['tab_id'] ?? ''; $idx = (int)($_POST['index'] ?? -1);
+            if (isset($data['products'][$tabId][$idx]) && $idx < count($data['products'][$tabId]) - 1) {
                 $tmp = $data['products'][$tabId][$idx+1]; $data['products'][$tabId][$idx+1] = $data['products'][$tabId][$idx]; $data['products'][$tabId][$idx] = $tmp;
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
+                $message = "<div class='alert alert-success'>✅ 产品下移成功！</div>";
             }
         }
         if ($action === 'add_product') {
-            $tabId = $_POST['tab_id'] ?? 'tab1'; $name = trim($_POST['name'] ?? ''); $url = trim($_POST['url'] ?? ''); $iconPath = trim($_POST['icon_url'] ?? '');
+            $tabId = $_POST['tab_id'] ?? 'tab1'; 
+            $name = trim($_POST['name'] ?? ''); 
+            $url = trim($_POST['url'] ?? ''); 
+            $iconPath = trim($_POST['icon_url'] ?? '');
+            
+            $productCode = 'prod_' . uniqid() . '_' . bin2hex(random_bytes(4));
+            
             if (isset($_FILES['icon_file']) && $_FILES['icon_file']['error'] === UPLOAD_ERR_OK) {
                 $ext = strtolower(pathinfo($_FILES['icon_file']['name'], PATHINFO_EXTENSION));
                 if (in_array($ext, $allowedExtensions)) {
                     $newFileName = uniqid() . '.' . $ext;
-                    move_uploaded_file($_FILES['icon_file']['tmp_name'], $uploadDir . $newFileName);
-                    $iconPath = 'uploads/' . $newFileName;
+                    if (move_uploaded_file($_FILES['icon_file']['tmp_name'], $uploadDir . $newFileName)) {
+                        $iconPath = 'uploads/' . $newFileName;
+                    } else {
+                        $message = "<div class='alert alert-error'>❌ 图标上传失败，请检查目录权限。</div>";
+                    }
+                } else {
+                    $message = "<div class='alert alert-error'>❌ 不支持的图片格式，请上传 JPG/PNG/GIF/WEBP。</div>";
                 }
             }
-            if (!empty($name) && !empty($url)) {
-                $data['products'][$tabId][] = ['id' => 'prod_' . uniqid(), 'name' => $name, 'icon' => $iconPath, 'url' => $url, 'time' => $now];
-                file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-                $message = "<div class='alert alert-success'>✅ 产品上架成功！</div>";
+            
+            $duplicate = false;
+            if (!empty($data['products'][$tabId])) {
+                foreach ($data['products'][$tabId] as $existing) {
+                    if ($existing['name'] === $name && $existing['url'] === $url) {
+                        $duplicate = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (!empty($name) && !empty($url) && !$duplicate) {
+                $data['products'][$tabId][] = [
+                    'id' => 'prod_' . uniqid(),
+                    'name' => $name,
+                    'icon' => $iconPath,
+                    'url' => $url,
+                    'time' => $now,
+                    'code' => $productCode
+                ];
+                $writeResult = file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                if ($writeResult === false) {
+                    $message = "<div class='alert alert-error'>❌ 数据写入失败，请检查文件权限！</div>";
+                } else {
+                    $data = json_decode(file_get_contents($dataFile), true);
+                    $message = "<div class='alert alert-success'>✅ 产品上架成功！内部标识已自动生成。</div>";
+                }
+            } elseif ($duplicate) {
+                $message = "<div class='alert alert-warning'>⚠️ 该产品已存在，请勿重复添加。</div>";
+            } else {
+                $message = "<div class='alert alert-error'>❌ 请完整填写产品名称和链接。</div>";
             }
         }
         if ($action === 'delete_product') {
-            $tabId = $_POST['tab_id'] ?? ''; $index = $_POST['index'] ?? '';
+            $tabId = $_POST['tab_id'] ?? ''; $index = (int)($_POST['index'] ?? -1);
             if (isset($data['products'][$tabId][$index])) {
                 $deletedProduct = $data['products'][$tabId][$index];
                 if (isset($data['product_channel_mapping'][$deletedProduct['id']])) { unset($data['product_channel_mapping'][$deletedProduct['id']]); }
                 array_splice($data['products'][$tabId], $index, 1);
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 产品已彻底删除！</div>";
             }
         }
         if ($action === 'update_product') {
-            $tabId = $_POST['tab_id'] ?? ''; $index = $_POST['index'] ?? '';
+            $tabId = $_POST['tab_id'] ?? ''; $index = (int)($_POST['index'] ?? -1);
             if (isset($data['products'][$tabId][$index])) {
                 $data['products'][$tabId][$index]['name'] = trim($_POST['name'] ?? '');
                 $data['products'][$tabId][$index]['url'] = trim($_POST['url'] ?? '');
@@ -282,15 +463,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $ext = strtolower(pathinfo($_FILES['icon_file']['name'], PATHINFO_EXTENSION));
                     if (in_array($ext, $allowedExtensions)) {
                         $newFileName = uniqid() . '.' . $ext;
-                        move_uploaded_file($_FILES['icon_file']['tmp_name'], $uploadDir . $newFileName);
-                        $data['products'][$tabId][$index]['icon'] = 'uploads/' . $newFileName;
+                        if (move_uploaded_file($_FILES['icon_file']['tmp_name'], $uploadDir . $newFileName)) {
+                            $data['products'][$tabId][$index]['icon'] = 'uploads/' . $newFileName;
+                        } else {
+                            $message = "<div class='alert alert-error'>❌ 图标更新失败，请检查目录权限。</div>";
+                        }
+                    } else {
+                        $message = "<div class='alert alert-error'>❌ 不支持的图片格式。</div>";
                     }
                 } elseif (!empty($_POST['icon_url'])) { $data['products'][$tabId][$index]['icon'] = trim($_POST['icon_url']); }
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-                $message = "<div class='alert alert-success'>✅ 产品更新成功！</div>";
+                $data = json_decode(file_get_contents($dataFile), true);
+                if (empty($message)) {
+                    $message = "<div class='alert alert-success'>✅ 产品更新成功！</div>";
+                }
             }
         }
 
+        // --- 底部横幅管理 ---
         if ($action === 'add_banner') {
             $title = trim($_POST['title'] ?? ''); $subtitle = trim($_POST['subtitle'] ?? '');
             $url = trim($_POST['url'] ?? ''); $iconPath = trim($_POST['icon_url'] ?? '');
@@ -305,11 +495,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($title) {
                 $data['banners'][] = ['id' => 'ban_'.uniqid(), 'title' => $title, 'subtitle' => $subtitle, 'icon' => $iconPath, 'url' => $url, 'time' => $now];
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 底部链接添加成功！</div>";
             }
         }
         if ($action === 'edit_banner') {
-            $idx = $_POST['index'] ?? '';
+            $idx = (int)($_POST['index'] ?? -1);
             if (isset($data['banners'][$idx])) {
                 $data['banners'][$idx]['title'] = trim($_POST['title'] ?? '');
                 $data['banners'][$idx]['subtitle'] = trim($_POST['subtitle'] ?? '');
@@ -324,14 +515,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 } elseif (!empty($_POST['icon_url'])) { $data['banners'][$idx]['icon'] = trim($_POST['icon_url']); }
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 底部链接修改成功！</div>";
             }
         }
         if ($action === 'delete_banner') {
-            $idx = $_POST['index'] ?? '';
+            $idx = (int)($_POST['index'] ?? -1);
             if (isset($data['banners'][$idx])) {
                 array_splice($data['banners'], $idx, 1);
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 底部链接已删除！</div>";
             }
         }
@@ -340,6 +533,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($idx > 0 && isset($data['banners'][$idx])) {
                 $tmp = $data['banners'][$idx-1]; $data['banners'][$idx-1] = $data['banners'][$idx]; $data['banners'][$idx] = $tmp;
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
             }
         }
         if ($action === 'move_banner_down') {
@@ -347,6 +541,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($idx >= 0 && $idx < $total - 1 && isset($data['banners'][$idx])) {
                 $tmp = $data['banners'][$idx+1]; $data['banners'][$idx+1] = $data['banners'][$idx]; $data['banners'][$idx] = $tmp;
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
             }
         }
 
@@ -360,6 +555,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$exists) {
                     $data['channels'][] = ['code' => $channel_code, 'name' => $channel_name, 'time' => $now];
                     file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                    $data = json_decode(file_get_contents($dataFile), true);
                     $message = "<div class='alert alert-success'>✅ 代理通道添加成功！</div>";
                 } else { $message = "<div class='alert alert-warning'>⚠️ 该通道代号已存在。</div>"; }
             } else { $message = "<div class='alert alert-error'>❌ 请输入合法的通道代号（英文+数字）。</div>"; }
@@ -373,12 +569,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($ch['code'] === $old_code) { $ch['name'] = $channel_name; $ch['time'] = $now; break; }
                 }
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 通道名称修改成功！</div>";
             }
         }
 
         if ($action === 'delete_channel') {
-            $del_index = $_POST['channel_index'] ?? '';
+            $del_index = (int)($_POST['channel_index'] ?? -1);
             if (isset($data['channels'][$del_index])) {
                 $deletedChannel = $data['channels'][$del_index];
                 if (isset($data['product_channel_mapping'])) {
@@ -388,6 +585,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 array_splice($data['channels'], $del_index, 1);
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 通道已彻底删除！</div>";
             }
         }
@@ -397,6 +595,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($idx > 0 && isset($data['site_info']['carousel_images'][$idx])) {
                 $tmp = $data['site_info']['carousel_images'][$idx-1]; $data['site_info']['carousel_images'][$idx-1] = $data['site_info']['carousel_images'][$idx]; $data['site_info']['carousel_images'][$idx] = $tmp;
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
             }
         }
         if ($action === 'move_carousel_down') {
@@ -404,6 +603,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($idx >= 0 && $idx < $total - 1 && isset($data['site_info']['carousel_images'][$idx])) {
                 $tmp = $data['site_info']['carousel_images'][$idx+1]; $data['site_info']['carousel_images'][$idx+1] = $data['site_info']['carousel_images'][$idx]; $data['site_info']['carousel_images'][$idx] = $tmp;
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
             }
         }
 
@@ -425,16 +625,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $data['site_info']['carousel_images'][] = $finalPath;
                 $data['carousel_times'][$finalPath] = $now;
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 轮播图添加成功！</div>";
             }
         }
+
+        if ($action === 'update_carousel') {
+            $idx = (int)($_POST['carousel_index'] ?? -1);
+            if (isset($data['site_info']['carousel_images'][$idx])) {
+                $oldPath = $data['site_info']['carousel_images'][$idx];
+                $carouselUrl = trim($_POST['carousel_url'] ?? '');
+                $finalPath = '';
+
+                if (isset($_FILES['carousel_file']) && $_FILES['carousel_file']['error'] === UPLOAD_ERR_OK) {
+                    $ext = strtolower(pathinfo($_FILES['carousel_file']['name'], PATHINFO_EXTENSION));
+                    if (in_array($ext, $allowedExtensions)) {
+                        $newFileName = 'carousel_' . time() . '_' . uniqid() . '.' . $ext;
+                        if (move_uploaded_file($_FILES['carousel_file']['tmp_name'], $uploadDir . $newFileName)) {
+                            $finalPath = 'uploads/' . $newFileName;
+                        }
+                    }
+                } elseif (!empty($carouselUrl)) {
+                    $finalPath = $carouselUrl;
+                }
+
+                if (!empty($finalPath)) {
+                    $data['site_info']['carousel_images'][$idx] = $finalPath;
+                    if ($oldPath !== $finalPath) { unset($data['carousel_times'][$oldPath]); }
+                    $data['carousel_times'][$finalPath] = $now;
+                    file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                    $data = json_decode(file_get_contents($dataFile), true);
+                    $message = "<div class='alert alert-success'>✅ 轮播图更换成功！</div>";
+                } else {
+                    $message = "<div class='alert alert-warning'>⚠️ 没有上传新图片或填写链接，未做修改。</div>";
+                }
+            }
+        }
+
         if ($action === 'delete_carousel') {
-            $del_index = $_POST['carousel_index'] ?? '';
+            $del_index = (int)($_POST['carousel_index'] ?? -1);
             if (isset($data['site_info']['carousel_images'][$del_index])) {
                 $delPath = $data['site_info']['carousel_images'][$del_index];
                 unset($data['carousel_times'][$delPath]);
                 array_splice($data['site_info']['carousel_images'], $del_index, 1);
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 轮播图已删除！</div>";
             }
         }
@@ -459,13 +694,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $channel_code = $_POST['channel_code'] ?? '';
             $product_id = $_POST['product_id'] ?? '';
             $channel_domain = trim($_POST['channel_domain'] ?? '');
-            if (!empty($channel_domain)) {
+            if (!empty($channel_domain) && !empty($channel_code) && !empty($product_id)) {
                 if (!isset($data['product_channel_mapping'])) $data['product_channel_mapping'] = [];
                 if (!isset($data['product_channel_mapping'][$product_id])) $data['product_channel_mapping'][$product_id] = [];
                 $data['product_channel_mapping'][$product_id][$channel_code] = rtrim($channel_domain, '/');
                 $data['mapping_times'][$product_id][$channel_code] = $now;
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 跳转设置成功！</div>";
+            } else {
+                $message = "<div class='alert alert-error'>❌ 请完整填写产品、通道和域名。</div>";
             }
         }
 
@@ -473,7 +711,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $channel_code = $_POST['channel_code'] ?? '';
             $product_ids = $_POST['product_ids'] ?? [];
             $channel_domains = $_POST['channel_domains'] ?? [];
-            if (!empty($product_ids)) {
+            if (!empty($channel_code) && !empty($product_ids)) {
                 if (!isset($data['product_channel_mapping'])) $data['product_channel_mapping'] = [];
                 $successCount = 0;
                 foreach ($product_ids as $index => $product_id) {
@@ -486,7 +724,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 批量设置成功！共更新 {$successCount} 个产品。</div>";
+            } else {
+                $message = "<div class='alert alert-error'>❌ 请选择通道和至少一个产品。</div>";
             }
         }
 
@@ -500,6 +741,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     unset($data['product_channel_mapping'][$product_id]);
                 }
                 file_put_contents($dataFile, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                $data = json_decode(file_get_contents($dataFile), true);
                 $message = "<div class='alert alert-success'>✅ 映射已移除！</div>";
             }
         }
@@ -510,18 +752,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!in_array($new_ip, $whitelistIps)) {
                     $whitelist[] = ['ip' => $new_ip, 'time' => $now];
                     file_put_contents($whitelistFile, json_encode(array_values($whitelist), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                    // 重新读取白名单
+                    $whitelistRaw = json_decode(file_get_contents($whitelistFile), true) ?: [];
+                    $whitelist = [];
+                    $whitelistIps = [];
+                    foreach ($whitelistRaw as $item) {
+                        if (is_string($item)) {
+                            $whitelist[] = ['ip' => $item, 'time' => '早期'];
+                            $whitelistIps[] = $item;
+                        } else {
+                            $whitelist[] = $item;
+                            $whitelistIps[] = $item['ip'];
+                        }
+                    }
                     $message = "<div class='alert alert-success'>✅ IP 已加入白名单！</div>";
+                } else {
+                    $message = "<div class='alert alert-warning'>⚠️ 该 IP 已在白名单中。</div>";
                 }
+            } else {
+                $message = "<div class='alert alert-error'>❌ 无效的 IP 地址格式。</div>";
             }
         }
 
+        // ✅ 修复 delete_ip：真正从文件中移除 IP
         if ($action === 'delete_ip') {
             $del_ip = trim($_POST['ip'] ?? '');
-            $whitelist = array_values(array_filter($whitelist, function($item) use ($del_ip) { return $item['ip'] !== $del_ip; }));
-            file_put_contents($whitelistFile, json_encode($whitelist, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-            $message = "<div class='alert alert-success'>✅ IP 已移除！</div>";
+            // 从文件读取最新内容
+            $currentRaw = json_decode(file_get_contents($whitelistFile), true) ?: [];
+            // 过滤掉要删除的 IP（兼容字符串和数组格式）
+            $newWhitelist = array_values(array_filter($currentRaw, function($item) use ($del_ip) {
+                if (is_string($item)) {
+                    return $item !== $del_ip;
+                } else {
+                    return $item['ip'] !== $del_ip;
+                }
+            }));
+            $writeResult = file_put_contents($whitelistFile, json_encode($newWhitelist, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+            if ($writeResult === false) {
+                $message = "<div class='alert alert-error'>❌ 删除 IP 失败，文件写入错误！请检查 whitelist.json 的权限。</div>";
+            } else {
+                // 重新加载白名单变量
+                $whitelistRaw = json_decode(file_get_contents($whitelistFile), true) ?: [];
+                $whitelist = [];
+                $whitelistIps = [];
+                foreach ($whitelistRaw as $item) {
+                    if (is_string($item)) {
+                        $whitelist[] = ['ip' => $item, 'time' => '早期'];
+                        $whitelistIps[] = $item;
+                    } else {
+                        $whitelist[] = $item;
+                        $whitelistIps[] = $item['ip'];
+                    }
+                }
+                $message = "<div class='alert alert-success'>✅ IP 已移除！</div>";
+            }
         }
 
+        // 最后重新读取数据（保持最新）
         $data = json_decode(file_get_contents($dataFile), true);
         $whitelistRaw = json_decode(file_get_contents($whitelistFile), true) ?: [];
         $whitelist = [];
@@ -529,6 +816,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// ==========================================
+// 统计与风云榜数据
+// ==========================================
 $allProducts = [];
 if (!empty($data['tabs'])) {
     foreach ($data['tabs'] as $t) {
@@ -557,6 +847,7 @@ function getDayStats($statsData, $dateStr) {
     }
     return ['pv' => $pv, 'uv' => count($uvList)];
 }
+
 $todayStr = date('Y-m-d');
 $yesterdayStr = date('Y-m-d', strtotime('-1 days'));
 $dayBeforeStr = date('Y-m-d', strtotime('-2 days'));
@@ -635,6 +926,7 @@ if (file_exists($logFile)) {
     $logData = array_slice($logData, 0, 500); 
 }
 
+// ---------- 登录及后台界面（完整 HTML） ----------
 if (empty($_SESSION['admin_logged'])) {
 ?>
 <!DOCTYPE html>
@@ -675,6 +967,7 @@ if (empty($_SESSION['admin_logged'])) {
 </body>
 </html>
 <?php exit; } ?>
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -731,6 +1024,9 @@ if (empty($_SESSION['admin_logged'])) {
         .stat-title { font-size:13px; color:#6b7280; font-weight:bold;}
         .stat-row { display:flex; justify-content:space-between; align-items:center; border-bottom:1px dashed #e5e7eb; padding-bottom:5px; margin-bottom:5px;}
         .stat-row:last-child { border:none; margin:0; padding:0;}
+        .current-ip-box { background: #f0fdf4; border: 1px solid #86efac; padding: 12px 18px; border-radius: 8px; display: inline-block; margin-bottom: 15px; }
+        .current-ip-box code { font-size: 16px; color: #16a34a; font-weight: bold; }
+        .btn-add-current-ip { margin-left: 15px; }
     </style>
 </head>
 <body>
@@ -771,6 +1067,7 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="dashboard" class="module-content <?php echo $activeModule === 'dashboard' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">📊 网站流量监控与系统大盘</div>
+                        <div class="help-box">此大屏显示全站的实时流量趋势（鼠标悬停在图表节点上可显示精确时间和数据）。系统将自动为您清理旧数据，保障极速流畅运行！</div>
                         
                         <div class="form-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
                             <div class="form-group"><label>分类板块数量</label><div class="stats-number"><?php echo count($data['tabs']??[]); ?></div></div>
@@ -817,6 +1114,8 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="traffic_ranking" class="module-content <?php echo $activeModule === 'traffic_ranking' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">🏆 各通道流量风云榜</div>
+                        <div class="help-box">这里可以查询最近 30 天内【每一天】甚至是【每一个小时】各个代理商推广通道的点击量(PV)和独立访客数(UV)。</div>
+                        
                         <form method="GET" style="margin-bottom: 20px; display:flex; align-items:center; gap:15px; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
                             <input type="hidden" name="module" value="traffic_ranking">
                             <label style="font-weight:bold;">📅 选择日期：</label>
@@ -859,6 +1158,7 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="access_logs" class="module-content <?php echo $activeModule === 'access_logs' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">👣 访客访问日志追踪</div>
+                        <div class="help-box">日志系统仅保留并显示最近 7 天的访客记录（过期的自动清理），且页面最多展示最新 500 条。<br>你可以使用下方过滤条件，单独查看某个代理通道的记录，或者精准搜索某个访客的 IP。</div>
                         
                         <div style="background:#fffbeb; border:1px solid #fde68a; padding:15px; border-radius:8px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
                             <div>
@@ -919,9 +1219,11 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="tabs" class="module-content <?php echo $activeModule === 'tabs' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">🗂️ 分类板块管理</div>
-                        <div class="help-box" style="margin-bottom:15px;">
-                            <strong>默认板块保护：</strong> 系统必须保留至少一个默认板块。被标记为“默认”的板块无法被删除！若要删除，请先将其他板块设为默认。
+                        <div class="help-box">
+                            在这里管理前端主页上的大分类选项卡（如：8NN集团产品、电子模拟器等）。<br>
+                            <strong>默认板块保护：</strong> 系统必须保留至少一个默认板块。被标记为“默认”的板块绝对无法被删除！若要删除，请先将其他板块设为默认。
                         </div>
+                        
                         <form method="POST" style="margin-bottom:20px; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
                             <input type="hidden" name="action" value="add_tab">
                             <label style="display:block; margin-bottom:10px; font-weight:bold;">✨ 添加新分类：</label>
@@ -939,12 +1241,12 @@ if (empty($_SESSION['admin_logged'])) {
                                         <?php if(!empty($t['is_default'])): ?>
                                             <span style="background:#ecfdf5; color:#059669; padding:4px 8px; border-radius:4px; font-weight:bold; font-size:12px;">🟢 当前默认</span>
                                         <?php else: ?>
-                                            <form method="POST" style="margin:0;"><input type="hidden" name="action" value="set_default_tab"><input type="hidden" name="tab_id" value="<?php echo $t['id']; ?>"><button type="submit" class="btn btn-outline btn-sm">设为默认</button></form>
+                                            <form method="POST" style="margin:0;"><input type="hidden" name="action" value="set_default_tab"><input type="hidden" name="index" value="<?php echo $idx; ?>"><button type="submit" class="btn btn-outline btn-sm">设为默认</button></form>
                                         <?php endif; ?>
                                     </td>
                                     <td>
                                         <form method="POST" style="display:flex; gap:10px; align-items:center;">
-                                            <input type="hidden" name="action" value="edit_tab"><input type="hidden" name="tab_id" value="<?php echo $t['id']; ?>">
+                                            <input type="hidden" name="action" value="edit_tab"><input type="hidden" name="index" value="<?php echo $idx; ?>">
                                             <input type="text" name="tab_name" class="form-control" value="<?php echo htmlspecialchars($t['name']); ?>" required style="width:160px;">
                                             <button type="submit" class="btn btn-warning btn-sm">保存</button>
                                         </form>
@@ -957,7 +1259,7 @@ if (empty($_SESSION['admin_logged'])) {
                                             <form method="POST" style="margin:0;"><input type="hidden" name="action" value="move_tab_down"><input type="hidden" name="index" value="<?php echo $idx; ?>"><button type="submit" class="action-btn btn-outline btn-sm" <?php if($idx == $tabCount - 1) echo 'disabled style="opacity:0.5;cursor:not-allowed;"'; ?>>⬇️下移</button></form>
                                             
                                             <form method="POST" onsubmit="confirmDelete(event, this, '确定要彻底删除该分类吗？<br><br><span style=\'color:red;font-weight:bold;\'>注意：这将连带删除该分类下的所有产品！</span>');">
-                                                <input type="hidden" name="action" value="delete_tab"><input type="hidden" name="tab_id" value="<?php echo $t['id']; ?>">
+                                                <input type="hidden" name="action" value="delete_tab"><input type="hidden" name="index" value="<?php echo $idx; ?>">
                                                 <button type="submit" class="action-btn btn-danger btn-sm" style="margin-left:5px;" <?php if(!empty($t['is_default']) || $tabCount <= 1) echo 'disabled style="opacity:0.5;cursor:not-allowed;" title="默认板块不可删除"'; ?>>❌删除</button>
                                             </form>
                                         </div>
@@ -972,6 +1274,11 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="product" class="module-content <?php echo $activeModule === 'product' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">🎁 添加产品</div>
+                        <div class="help-box">
+                            <strong>使用说明：</strong> 在这里上架新的产品/游戏。填写的“平台默认跳转链接”是指：当普通散客（不通过代理通道）访问你的网站时，点击产品跳去的地方。<br>
+                            你可以点击下方产品列表上的分类按钮，快捷筛选查看对应板块下的产品。
+                        </div>
+                        
                         <form method="POST" enctype="multipart/form-data">
                             <input type="hidden" name="action" value="add_product">
                             <div class="form-grid">
@@ -988,24 +1295,36 @@ if (empty($_SESSION['admin_logged'])) {
                     </div>
                     <div class="card">
                         <div class="card-header">📋 已上架产品</div>
-                        
                         <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap;" id="productFilterContainer">
                             <button class="btn btn-primary btn-sm" onclick="filterProducts('all', this)">全部显示</button>
                             <?php if (!empty($data['tabs'])): foreach ($data['tabs'] as $t): ?>
                                 <button class="btn btn-outline btn-sm" onclick="filterProducts('<?php echo $t['id']; ?>', this)">所属板块：<?php echo htmlspecialchars($t['name']); ?></button>
                             <?php endforeach; endif; ?>
                         </div>
-
                         <table class="custom-table">
-                            <thead><tr><th>板块</th><th>产品名称</th><th>平台默认链接</th><th>上架/修改时间</th><th>操作 & 排序</th></tr></thead>
+                            <thead>
+                                <tr>
+                                    <th>所属板块</th>
+                                    <th>产品名称</th>
+                                    <th>内部标识</th>
+                                    <th>平台默认链接</th>
+                                    <th>上架/修改时间</th>
+                                    <th>操作 & 排序</th>
+                                </tr>
+                            </thead>
                             <tbody>
-                                <?php if (!empty($data['tabs'])): foreach ($data['tabs'] as $t): 
-                                    $prodCount = count($data['products'][$t['id']] ?? []);
-                                    if (!empty($data['products'][$t['id']])): foreach ($data['products'][$t['id']] as $idx => $p): 
+                                <?php 
+                                if (!empty($data['tabs'])): 
+                                    foreach ($data['tabs'] as $t): 
+                                        $products = $data['products'][$t['id']] ?? [];
+                                        $prodCount = count($products);
+                                        if ($prodCount > 0): 
+                                            foreach ($products as $idx => $p): 
                                 ?>
                                 <tr class="product-row" data-tab="<?php echo $t['id']; ?>">
-                                    <td><span style="background:#f3f4f6; padding:3px 8px; border-radius:4px; font-size:12px; color:#4b5563;"><?php echo htmlspecialchars($t['name']); ?></span></td>
+                                    <td><span style="background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:4px; font-size:12px;">🏷️ <?php echo htmlspecialchars($t['name']); ?></span></td>
                                     <td><div style="display:flex; align-items:center; gap:10px;"><img src="<?php echo htmlspecialchars(getImgUrl($p['icon']??'')); ?>" style="width:30px; height:30px; border-radius:4px; object-fit:cover; border:1px solid #e5e7eb;"><strong style="font-size: 14px;"><?php echo htmlspecialchars($p['name']); ?></strong></div></td>
+                                    <td><span style="font-family:monospace; font-size:13px; color:#4b5563;"><?php echo htmlspecialchars($p['code'] ?? '-'); ?></span></td>
                                     <td><span style="color:#6b7280; font-size:12px;"><?php echo htmlspecialchars($p['url']); ?></span></td>
                                     <td><span style="color:#9ca3af; font-size:12px;"><?php echo htmlspecialchars($p['time'] ?? '-'); ?></span></td>
                                     <td>
@@ -1024,15 +1343,27 @@ if (empty($_SESSION['admin_logged'])) {
                                         </div>
                                     </td>
                                 </tr>
-                                <?php endforeach; endif; endforeach; endif; ?>
+                                <?php 
+                                            endforeach; 
+                                        endif; 
+                                    endforeach; 
+                                endif; 
+                                ?>
                             </tbody>
                         </table>
                     </div>
                 </div>
 
+                <!-- ==================== 通道管理（含搜索功能） ==================== -->
                 <div id="channels" class="module-content <?php echo $activeModule === 'channels' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">🔀 代理通道管理</div>
+                        <div class="help-box">
+                            1. 输入一个英文/数字代号（比如：<code>agent88</code>），点击添加。<br>
+                            2. 代理商发给客户的链接就是：<code>您的主域名/?code=agent88</code><br>
+                            3. ⚠️ 网页只会显示在“通道映射管理”里给这个通道配置过的产品。
+                        </div>
+                        
                         <form method="POST" style="margin-bottom:20px;">
                             <input type="hidden" name="action" value="add_channel">
                             <div class="form-grid">
@@ -1041,7 +1372,14 @@ if (empty($_SESSION['admin_logged'])) {
                             </div>
                             <button type="submit" class="btn btn-primary">➕ 创建通道</button>
                         </form>
-                        <table class="custom-table">
+
+                        <!-- 🔍 通道搜索框 -->
+                        <div style="margin: 15px 0; display: flex; gap: 10px; align-items: center;">
+                            <input type="text" id="channelSearchInput" class="form-control" placeholder="🔍 搜索推广后缀或代理商名称..." style="max-width: 300px;" onkeyup="filterChannels()">
+                            <button class="btn btn-outline" onclick="document.getElementById('channelSearchInput').value='';filterChannels();">清除</button>
+                        </div>
+
+                        <table class="custom-table" id="channelTable">
                             <thead><tr><th>通道代号 (推广后缀)</th><th>代理商备注名称</th><th>创建/修改时间</th><th>操作</th></tr></thead>
                             <tbody>
                                 <?php if (!empty($data['channels'])): foreach ($data['channels'] as $i => $ch): ?>
@@ -1066,6 +1404,8 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="channel_mapping" class="module-content <?php echo $activeModule === 'channel_mapping' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">🔗 通道映射管理</div>
+                        <div class="help-box">为具体的产品绑定【代理通道】并设置【专属跳转域名】。没配置代理的产品在此通道下对访客强制隐身。</div>
+                        
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                             <div style="display:flex; gap:10px;"><button type="button" class="btn btn-primary" onclick="openModal('addMappingModal')">➕ 新增产品映射</button><button type="button" class="btn btn-warning" onclick="showBatchMappingModal()">📦 批量设置映射</button></div>
                             <div style="display:flex; gap:10px;"><input type="text" id="searchAgent" class="search-input" placeholder="🔍 搜索代理通道..." onkeyup="filterMappingTable()"><input type="text" id="searchDomain" class="search-input" placeholder="🔍 搜索跳转域名..." onkeyup="filterMappingTable()"></div>
@@ -1111,6 +1451,34 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="carousel" class="module-content <?php echo $activeModule === 'carousel' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">🖼️ 轮播图管理</div>
+                        <div class="help-box">建议尺寸宽 790px，高 318px。支持电脑本地上传，或者直接粘贴图片的 URL 链接。</div>
+                        
+                        <div id="editCarouselModal" class="modal">
+                            <div class="modal-content" style="max-width: 500px;">
+                                <div class="modal-header">🔄 更换轮播图</div>
+                                <form method="POST" enctype="multipart/form-data">
+                                    <input type="hidden" name="action" value="update_carousel">
+                                    <input type="hidden" name="carousel_index" id="editCarouselIndex">
+                                    <div class="form-group">
+                                        <label>当前图片路径 (系统识别用)</label>
+                                        <input type="text" id="editCarouselCurrent" class="form-control" disabled style="background:#f3f4f6; color:#9ca3af;">
+                                    </div>
+                                    <div class="form-group" style="margin-top:15px;">
+                                        <label>方式一：电脑上传新图片 (推荐)</label>
+                                        <input type="file" name="carousel_file" class="form-control" accept="image/*">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>方式二：填新图片外链URL</label>
+                                        <input type="text" name="carousel_url" class="form-control" placeholder="https://...">
+                                    </div>
+                                    <div class="modal-actions" style="margin-top: 25px; display:flex; justify-content:flex-end; gap:10px;">
+                                        <button type="button" class="btn btn-outline" onclick="closeModal('editCarouselModal')">取消</button>
+                                        <button type="submit" class="btn btn-primary">💾 保存更换</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
                         <form method="POST" enctype="multipart/form-data" style="background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb; margin-bottom:20px;">
                             <input type="hidden" name="action" value="add_carousel">
                             <div class="form-grid" style="margin-bottom:10px;">
@@ -1130,10 +1498,14 @@ if (empty($_SESSION['admin_logged'])) {
                                         <form method="POST" style="flex:1;"><input type="hidden" name="action" value="move_carousel_up"><input type="hidden" name="index" value="<?php echo $i; ?>"><button type="submit" class="btn btn-outline" style="width:100%; padding:4px;" <?php if($i == 0) echo 'disabled style="opacity:0.5;cursor:not-allowed;"'; ?>>⬅️ 前移</button></form>
                                         <form method="POST" style="flex:1;"><input type="hidden" name="action" value="move_carousel_down"><input type="hidden" name="index" value="<?php echo $i; ?>"><button type="submit" class="btn btn-outline" style="width:100%; padding:4px;" <?php if($i == $carCount - 1) echo 'disabled style="opacity:0.5;cursor:not-allowed;"'; ?>>➡️ 后移</button></form>
                                     </div>
-                                    <form method="POST" onsubmit="confirmDelete(event, this, '确定彻底删除这张轮播图吗？');" style="width:100%;">
-                                        <input type="hidden" name="action" value="delete_carousel"><input type="hidden" name="carousel_index" value="<?php echo $i; ?>">
-                                        <button type="submit" class="action-btn btn-danger" style="width:100%;">🗑️ 彻底删除</button>
-                                    </form>
+                                    <div style="display:flex; width:100%; gap:5px;">
+                                        <button type="button" class="btn btn-warning" style="flex:1; padding:4px; font-size:12px;" onclick="editCarousel(<?php echo $i; ?>, '<?php echo htmlspecialchars($img); ?>')">🔄 更换</button>
+                                        <form method="POST" onsubmit="confirmDelete(event, this, '确定彻底删除这张轮播图吗？');" style="flex:1;">
+                                            <input type="hidden" name="action" value="delete_carousel">
+                                            <input type="hidden" name="carousel_index" value="<?php echo $i; ?>">
+                                            <button type="submit" class="action-btn btn-danger" style="width:100%; padding:4px; font-size:12px;">🗑️ 删除</button>
+                                        </form>
+                                    </div>
                                 </div>
                             <?php endforeach; else: ?><div style="grid-column:1/-1; padding:20px; text-align:center;">暂无轮播图片</div><?php endif; ?>
                         </div>
@@ -1143,6 +1515,7 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="banners" class="module-content <?php echo $activeModule === 'banners' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">🔗 底部快捷链接编辑</div>
+                        <div class="help-box">修改主页底部的快捷横幅。如果你只展示不想让人点击跳转，把“跳转的域名”留空或者填 <code>#</code> 即可。支持无限动态添加！</div>
                         
                         <form method="POST" enctype="multipart/form-data" style="background:#eff6ff; padding:15px; border-radius:8px; border:1px solid #bfdbfe; margin-bottom:20px;">
                             <input type="hidden" name="action" value="add_banner">
@@ -1199,6 +1572,8 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="site" class="module-content <?php echo $activeModule === 'site' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">📝 全局配置</div>
+                        <div class="help-box">在这里修改前端网页的标题、滚动跑马灯、弹窗防骗提示以及底部的版权信息。</div>
+                        
                         <form method="POST" enctype="multipart/form-data">
                             <input type="hidden" name="action" value="update_site">
                             <div class="form-group" style="margin-bottom:15px;"><label>网站浏览器网页标题 (Title)</label><input type="text" name="site_title" value="<?php echo htmlspecialchars($data['site_info']['site_title'] ?? '平台导航主页'); ?>" class="form-control" required></div>
@@ -1225,8 +1600,30 @@ if (empty($_SESSION['admin_logged'])) {
                 <div id="whitelist" class="module-content <?php echo $activeModule === 'whitelist' ? 'active' : ''; ?>">
                     <div class="card">
                         <div class="card-header">🛡️ IP白名单管理 (安全防线)</div>
+                        <div class="help-box">
+                            <strong>最高安全防线：</strong>只要这里有IP，系统就会自动锁死非白名单访客（显示403）。<br>
+                            如果您因为网络切换被误拦进不去后台，请手动在浏览器访问 <code>/whitelist.php</code> 输入安全密码进行自助解封加白！
+                        </div>
+                        
+                        <!-- 显示当前 IP 并支持一键添加 -->
+                        <div class="current-ip-box">
+                            <span>🌐 您当前的公网 IP：</span>
+                            <code><?php echo htmlspecialchars($current_ip); ?></code>
+                            <?php if (!in_array($current_ip, $whitelistIps)): ?>
+                                <form method="POST" style="display:inline; margin-left: 10px;">
+                                    <input type="hidden" name="action" value="add_ip">
+                                    <input type="hidden" name="ip" value="<?php echo htmlspecialchars($current_ip); ?>">
+                                    <button type="submit" class="btn btn-primary btn-add-current-ip" style="padding: 6px 14px; font-size: 13px;">➕ 添加到白名单</button>
+                                </form>
+                            <?php else: ?>
+                                <span style="margin-left: 15px; color: #16a34a; font-weight:bold;">✅ 已在白名单中</span>
+                            <?php endif; ?>
+                        </div>
+
                         <form method="POST" style="display:flex; gap:12px; margin-bottom:20px;">
-                            <input type="hidden" name="action" value="add_ip"><input type="text" name="ip" class="form-control" placeholder="输入要强制放行的IP" required><button type="submit" class="btn btn-primary">➕ 加白</button>
+                            <input type="hidden" name="action" value="add_ip">
+                            <input type="text" name="ip" class="form-control" placeholder="输入要强制放行的IP" required>
+                            <button type="submit" class="btn btn-primary">➕ 加白</button>
                         </form>
                         <table class="custom-table">
                             <thead><tr><th>允许访问的 IP 地址</th><th>录入时间</th><th>操作</th></tr></thead>
@@ -1237,7 +1634,8 @@ if (empty($_SESSION['admin_logged'])) {
                                         <td><span style="color:#9ca3af; font-size:12px;"><?php echo htmlspecialchars($item['time']); ?></span></td>
                                         <td>
                                             <form method="POST" style="margin:0;" onsubmit="confirmDelete(event, this, '确定移除该 IP 的白名单权限吗？<br><br><span style=\'color:red;font-weight:bold;\'>注意：如果这是您自己的 IP，移除后您将立即被踢出后台！</span>');">
-                                                <input type="hidden" name="action" value="delete_ip"><input type="hidden" name="ip" value="<?php echo htmlspecialchars($item['ip']); ?>">
+                                                <input type="hidden" name="action" value="delete_ip">
+                                                <input type="hidden" name="ip" value="<?php echo htmlspecialchars($item['ip']); ?>">
                                                 <button type="submit" class="action-btn btn-danger">移除拦截</button>
                                             </form>
                                         </td>
@@ -1254,6 +1652,7 @@ if (empty($_SESSION['admin_logged'])) {
         </div>
     </div>
 
+    <!-- 模态框等 -->
     <div id="deleteConfirmModal" class="modal">
         <div class="modal-content" style="max-width: 400px; text-align: center; padding-top: 40px;">
             <div style="font-size: 48px; margin-bottom: 15px;">⚠️</div>
@@ -1267,7 +1666,19 @@ if (empty($_SESSION['admin_logged'])) {
     </div>
 
     <div id="editModal" class="modal">
-        <div class="modal-content"><div class="modal-header">✏️ 编辑产品</div><form method="POST" enctype="multipart/form-data"><input type="hidden" name="action" value="update_product"><input type="hidden" name="tab_id" id="editTabId"><input type="hidden" name="index" id="editIndex"><div class="form-group"><label>产品名称</label><input type="text" name="name" id="editName" class="form-control" required></div><div class="form-group"><label>平台默认跳转链接</label><input type="text" name="url" id="editUrl" class="form-control" required></div><div class="form-group"><label>更换图标 (选填)</label><input type="file" name="icon_file" class="form-control" accept="image/*"></div><div class="form-group"><label>外链图标</label><input type="text" name="icon_url" id="editIconUrl" class="form-control"></div><div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal('editModal')">取消</button><button type="submit" class="btn btn-primary">保存修改</button></div></form></div>
+        <div class="modal-content">
+            <div class="modal-header">✏️ 编辑产品</div>
+            <form method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="action" value="update_product">
+                <input type="hidden" name="tab_id" id="editTabId">
+                <input type="hidden" name="index" id="editIndex">
+                <div class="form-group"><label>产品名称</label><input type="text" name="name" id="editName" class="form-control" required></div>
+                <div class="form-group"><label>平台默认跳转链接</label><input type="text" name="url" id="editUrl" class="form-control" required></div>
+                <div class="form-group"><label>更换图标 (选填)</label><input type="file" name="icon_file" class="form-control" accept="image/*"></div>
+                <div class="form-group"><label>外链图标</label><input type="text" name="icon_url" id="editIconUrl" class="form-control"></div>
+                <div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal('editModal')">取消</button><button type="submit" class="btn btn-primary">保存修改</button></div>
+            </form>
+        </div>
     </div>
 
     <div id="addMappingModal" class="modal">
@@ -1308,11 +1719,69 @@ if (empty($_SESSION['admin_logged'])) {
     </div>
 
     <div id="channelMappingModal" class="modal">
-        <div class="modal-content" style="max-width: 500px;"><div class="modal-header">🔗 分配其他代理跳转</div><div style="margin-bottom: 20px; padding: 10px; background: #f9fafb;">为 <strong><span id="mappingProductName" style="color:var(--primary-color);"></span></strong> 配置跳转：</div><form method="POST"><input type="hidden" name="action" value="set_channel_mapping"><input type="hidden" name="product_id" id="mappingProductId"><div class="form-group"><label>选择代理通道</label><input type="text" class="form-control" placeholder="🔍 快捷搜索通道..." oninput="filterSelectOptions(this, 'otherChannelSelect')" style="margin-bottom: 5px;"><select name="channel_code" id="otherChannelSelect" class="form-control" required size="4" style="height: 120px;"><?php if (!empty($data['channels'])): foreach ($data['channels'] as $ch): ?><option value="<?php echo htmlspecialchars($ch['code']); ?>"><?php echo htmlspecialchars($ch['code'] . ' - ' . $ch['name']); ?></option><?php endforeach; endif; ?></select></div><div class="form-group"><label>跳转域名</label><input type="text" name="channel_domain" class="form-control" placeholder="https://..." required></div><div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal('channelMappingModal')">取消</button><button type="submit" class="btn btn-primary">💾 确定</button></div></form></div>
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">🔗 分配其他代理跳转</div>
+            <div style="margin-bottom: 20px; padding: 10px; background: #f9fafb;">为 <strong><span id="mappingProductName" style="color:var(--primary-color);"></span></strong> 配置跳转：</div>
+            <form method="POST">
+                <input type="hidden" name="action" value="set_channel_mapping">
+                <input type="hidden" name="product_id" id="mappingProductId">
+                <div class="form-group">
+                    <label>选择代理通道</label>
+                    <input type="text" class="form-control" placeholder="🔍 快捷搜索通道..." oninput="filterSelectOptions(this, 'otherChannelSelect')" style="margin-bottom: 5px;">
+                    <select name="channel_code" id="otherChannelSelect" class="form-control" required size="4" style="height: 120px;">
+                        <?php if (!empty($data['channels'])): foreach ($data['channels'] as $ch): ?>
+                            <option value="<?php echo htmlspecialchars($ch['code']); ?>"><?php echo htmlspecialchars($ch['code'] . ' - ' . $ch['name']); ?></option>
+                        <?php endforeach; endif; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>跳转域名</label>
+                    <input type="text" name="channel_domain" class="form-control" placeholder="https://..." required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" onclick="closeModal('channelMappingModal')">取消</button>
+                    <button type="submit" class="btn btn-primary">💾 确定</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <div id="batchMappingModal" class="modal">
-        <div class="modal-content" style="max-width: 900px;"><div class="modal-header">📦 批量为代理商分配产品</div><form method="POST"><input type="hidden" name="action" value="batch_set_channel_mapping"><div class="form-group"><label>1. 选择目标代理通道</label><input type="text" class="form-control" placeholder="🔍 快捷搜索通道..." oninput="filterSelectOptions(this, 'batchChannelSelect')" style="margin-bottom: 5px;"><select name="channel_code" id="batchChannelSelect" class="form-control" required size="4" style="height: 120px;"><?php if (!empty($data['channels'])): foreach ($data['channels'] as $ch): ?><option value="<?php echo htmlspecialchars($ch['code']); ?>"><?php echo htmlspecialchars($ch['code'] . ' - ' . $ch['name']); ?></option><?php endforeach; endif; ?></select></div><div style="margin-top: 20px;"><label>2. 勾选允许该代理推广的产品，并填入跳转域名：</label><div style="height:300px; overflow-y:auto; border:1px solid #e5e7eb; padding:10px; margin-top:10px; border-radius:8px;"><div class="checkbox-grid"><?php foreach ($allProducts as $prod): ?><label class="checkbox-item" style="display:flex; flex-direction:column; align-items:flex-start; gap:5px;"><div style="display:flex; align-items:center; gap:5px; width:100%;"><input type="checkbox" name="product_ids[]" value="<?php echo htmlspecialchars($prod['id']); ?>"><strong><?php echo htmlspecialchars($prod['name']); ?></strong></div><input type="text" name="channel_domains[]" class="form-control" placeholder="输入跳转域名" style="font-size:12px; padding:6px;"></label><?php endforeach; ?></div></div></div><div class="modal-actions"><button type="button" class="btn btn-outline" onclick="closeModal('batchMappingModal')">取消</button><button type="submit" class="btn btn-primary">💾 批量应用配置</button></div></form></div>
+        <div class="modal-content" style="max-width: 900px;">
+            <div class="modal-header">📦 批量为代理商分配产品</div>
+            <form method="POST">
+                <input type="hidden" name="action" value="batch_set_channel_mapping">
+                <div class="form-group">
+                    <label>1. 选择目标代理通道</label>
+                    <input type="text" class="form-control" placeholder="🔍 快捷搜索通道..." oninput="filterSelectOptions(this, 'batchChannelSelect')" style="margin-bottom: 5px;">
+                    <select name="channel_code" id="batchChannelSelect" class="form-control" required size="4" style="height: 120px;">
+                        <?php if (!empty($data['channels'])): foreach ($data['channels'] as $ch): ?>
+                            <option value="<?php echo htmlspecialchars($ch['code']); ?>"><?php echo htmlspecialchars($ch['code'] . ' - ' . $ch['name']); ?></option>
+                        <?php endforeach; endif; ?>
+                    </select>
+                </div>
+                <div style="margin-top: 20px;">
+                    <label>2. 勾选允许该代理推广的产品，并填入跳转域名：</label>
+                    <div style="height:300px; overflow-y:auto; border:1px solid #e5e7eb; padding:10px; margin-top:10px; border-radius:8px;">
+                        <div class="checkbox-grid">
+                            <?php foreach ($allProducts as $prod): ?>
+                                <label class="checkbox-item" style="display:flex; flex-direction:column; align-items:flex-start; gap:5px;">
+                                    <div style="display:flex; align-items:center; gap:5px; width:100%;">
+                                        <input type="checkbox" name="product_ids[]" value="<?php echo htmlspecialchars($prod['id']); ?>">
+                                        <strong><?php echo htmlspecialchars($prod['name']); ?></strong>
+                                    </div>
+                                    <input type="text" name="channel_domains[]" class="form-control" placeholder="输入跳转域名" style="font-size:12px; padding:6px;">
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-outline" onclick="closeModal('batchMappingModal')">取消</button>
+                    <button type="submit" class="btn btn-primary">💾 批量应用配置</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <script>
@@ -1320,7 +1789,6 @@ if (empty($_SESSION['admin_logged'])) {
         function closeModal(id) { document.getElementById(id).style.display = 'none'; }
         document.querySelectorAll('.modal').forEach(modal => { modal.addEventListener('click', function(e) { if (e.target === this) this.style.display = 'none'; }); });
 
-        // ✨ 高级防误触系统逻辑
         let currentDeleteForm = null;
         function confirmDelete(event, form, message) {
             event.preventDefault(); 
@@ -1334,13 +1802,25 @@ if (empty($_SESSION['admin_logged'])) {
             }
         }
 
-        function editProduct(tabId, index, name, url, iconUrl) {
-            document.getElementById('editTabId').value = tabId; document.getElementById('editIndex').value = index;
-            document.getElementById('editName').value = name; document.getElementById('editUrl').value = url;
-            document.getElementById('editIconUrl').value = iconUrl; openModal('editModal');
+        function editCarousel(index, currentUrl) {
+            document.getElementById('editCarouselIndex').value = index;
+            document.getElementById('editCarouselCurrent').value = currentUrl;
+            openModal('editCarouselModal');
         }
+
+        function editProduct(tabId, index, name, url, iconUrl) {
+            document.getElementById('editTabId').value = tabId;
+            document.getElementById('editIndex').value = index;
+            document.getElementById('editName').value = name;
+            document.getElementById('editUrl').value = url;
+            document.getElementById('editIconUrl').value = iconUrl;
+            openModal('editModal');
+        }
+
         function showProductMappingModal(productId, productName) {
-            document.getElementById('mappingProductId').value = productId; document.getElementById('mappingProductName').innerText = productName; openModal('channelMappingModal');
+            document.getElementById('mappingProductId').value = productId; 
+            document.getElementById('mappingProductName').innerText = productName; 
+            openModal('channelMappingModal');
         }
         function showBatchMappingModal() { openModal('batchMappingModal'); }
         
@@ -1365,7 +1845,6 @@ if (empty($_SESSION['admin_logged'])) {
             });
         }
 
-        // ✨ 按分类筛选产品
         function filterProducts(tabId, btnElement) {
             const container = document.getElementById('productFilterContainer');
             container.querySelectorAll('button').forEach(btn => {
@@ -1378,6 +1857,21 @@ if (empty($_SESSION['admin_logged'])) {
             const rows = document.querySelectorAll('.product-row');
             rows.forEach(row => {
                 if (tabId === 'all' || row.getAttribute('data-tab') === tabId) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+
+        // 🔍 通道搜索过滤函数
+        function filterChannels() {
+            const keyword = document.getElementById('channelSearchInput').value.toLowerCase();
+            const rows = document.querySelectorAll('#channels .custom-table tbody tr');
+            rows.forEach(row => {
+                const code = row.cells[0]?.innerText.toLowerCase() || '';
+                const name = row.cells[1]?.innerText.toLowerCase() || '';
+                if (code.includes(keyword) || name.includes(keyword)) {
                     row.style.display = '';
                 } else {
                     row.style.display = 'none';
